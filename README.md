@@ -1,9 +1,15 @@
 # PreProcessor
 Comment out debug code before pushing it to production.
 
-## Example Usage
+## Quick Start
 
-### Preprocess a list of PHP files
+### Installing
+Install the library using composer:
+```
+composer require muqsit/preprocessor:dev-master
+```
+
+### Preprocessing a list of PHP files
 ```php
 require_once "Client.php";
 require_once "Server.php";
@@ -30,7 +36,7 @@ final class Client{
 }
 ```
 
-### Preprocess a directory
+### Preprocessing a directory of PHP files
 ```php
 require "vendor/autoload.php";
 
@@ -39,7 +45,7 @@ use pocketmine\entity\Entity;
 use pocketmine\Player;
 use pocketmine\utils\Utils;
 
-PreProcessor::fromDirectory("./src")
+PreProcessor::fromDirectory("./src") // searches for .php files recursively
 	->commentOut(Logger::class, "debug")
 	->commentOut(Utils::class, "testValidInstance")
 	->commentOut(Utils::class, "validateCallableSignature")
