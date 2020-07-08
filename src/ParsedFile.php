@@ -9,6 +9,7 @@ use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
+use PhpParser\Node\Identifier;
 use PhpParser\Node\Scalar\EncapsedStringPart;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
@@ -63,7 +64,7 @@ final class ParsedFile{
 	 */
 	public function visit(Closure ...$visitors) : void{
 		$traverser = new NodeTraverser();
-		$traverser->addVisitor(new ClosureNodeVisitor(function(Node $node) use($visitors) {
+		$traverser->addVisitor(new ClosureNodeVisitor(function(Node $node) use($visitors){
 			if($node instanceof Expr && ($scope_index = self::exprHash($node)) !== null && isset($this->scopes[$scope_index])){
 				$scope = $this->scopes[$scope_index];
 				foreach($visitors as $visitor){
@@ -90,10 +91,10 @@ final class ParsedFile{
 	public function visitClassMethods(string $class, string $method, Closure ...$visitors) : void{
 		$class_type = new ObjectType($class);
 		$method = strtolower($method);
-		$this->visit(static function(Expr $expr, Scope $scope, string $index) use($class_type, $class, $method, $visitors) {
+		$this->visit(static function(Expr $expr, Scope $scope, string $index) use($class_type, $method, $visitors){
 			if($scope instanceof MutatingScope){
 				if($expr instanceof MethodCall){
-					if($expr->name->toLowerString() === $method){
+					if($expr->name instanceof Identifier && $expr->name->toLowerString() === $method){
 						$type = $scope->getType($expr->var);
 						if($class_type->accepts($type, true)){
 							foreach($visitors as $visitor){
@@ -105,7 +106,11 @@ final class ParsedFile{
 						}
 					}
 				}elseif($expr instanceof StaticCall){
-					if($class_type->accepts(new ObjectType($expr->name->toString()),true)){
+					if(
+						$expr->name instanceof Identifier &&
+						$expr->name->toLowerString() === $method &&
+						$class_type->accepts(new ObjectType($expr->name->toString()), true)
+					){
 						foreach($visitors as $visitor){
 							$return = $visitor($expr);
 							if($return !== null){

@@ -109,8 +109,12 @@ final class PreProcessor{
 	 */
 	public function commentOut(string $class, string $method) : self{
 		$printer = new Standard();
-		foreach($this->parsed_files as $file){
-			$file->visitClassMethods($class, $method, function(Expr $node) use($printer) {
+		$done = 0;
+		$total = count($this->parsed_files);
+
+		foreach($this->parsed_files as $path => $file){
+			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for {$class}::{$method} references in {$path}");
+			$file->visitClassMethods($class, $method, function(Expr $node) use($printer){
 				$expression = $printer->prettyPrintExpr($node);
 				Logger::info("Commented out " . str_replace(PHP_EOL, "", $expression));
 				return new ConstFetch(new Name("/* {$expression} */"));
