@@ -70,3 +70,7 @@ final class Player extends Client implements LoggerHolder{
 	}
 }
 ```
+
+## Libraries Used
+- [nikic/PHP-Parser](https://github.com/nikic/PHP-Parser/) - Reading and writing nodes using the formatting-preservation functionality
+- [https://github.com/phpstan/phpstan] - Determinig type of variables, properties, methods etc within the scope
