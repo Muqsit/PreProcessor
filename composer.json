@@ -1,0 +1,16 @@
+{
+    "name": "muqsit/preprocessor",
+    "description": "PHP library to ready code for production",
+    "type": "library",
+    "license": "LGPL-3.0",
+    "require": {
+        "php": ">=7.2.0",
+        "phpstan/phpstan": "0.12.29",
+        "nikic/php-parser": "4.3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "muqsit\\preprocessor\\": "src/"
+        }
+    }
+}
