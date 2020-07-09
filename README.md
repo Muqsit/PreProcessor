@@ -11,9 +11,9 @@ composer require muqsit/preprocessor:dev-master
 
 ### Preprocessing a list of PHP files
 ```php
-require_once "Client.php";
-require_once "Server.php";
-require_once "Logger.php";
+require_once "src/proxy/Client.php";
+require_once "src/proxy/Server.php";
+require_once "src/proxy/Logger.php";
 
 use muqsit\preprocessor\PreProcessor;
 use proxy\Logger;
