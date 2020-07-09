@@ -4,14 +4,16 @@ declare(strict_types=1);
 
 namespace muqsit\preprocessor;
 
+use Closure;
 use Exception;
 use InvalidArgumentException;
-use ParseError;
 use PhpParser\Lexer\Emulative;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Name;
+use PhpParser\Node\NullableType;
+use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Parser\Php7;
 use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\Analyser;
@@ -45,10 +47,6 @@ final class PreProcessor{
 		return new self($files);
 	}
 
-	/**
-	 * @param string $directory
-	 * @return self
-	 */
 	public static function fromDirectory(string $directory) : self{
 		if(!is_dir($directory)){
 			throw new InvalidArgumentException("Directory {$directory} does not exist");
@@ -90,19 +88,11 @@ final class PreProcessor{
 		$done = 0;
 		$total = count($files);
 		$paths = array_map(static function(SplFileInfo $file) : string{ return $file->getRealPath(); }, $files);
-		$errors = $analyser->analyse($paths, static function(string $file) use($total, &$done) : void{
+		$analyser->analyse($paths, static function(string $file) use($total, &$done) : void{
 			Logger::info("[" . ++$done . " / {$total}] phpstan >> Reading {$file}");
-		}, null, false, $paths)->getErrors();
-		if(count($errors) > 0){
-			foreach($errors as $error){
-				Logger::warning("PHPStan >> Error");
-				Logger::error("[{$error->getFile()}:{$error->getNodeLine()}] {$error->getMessage()}");
-			}
-			throw new ParseError("PHPStan failed to parse files");
-		}
+		}, null, false, $paths);
 
 		NotifierRule::unregisterListener($listener);
-
 
 		$lexer = new Emulative([
 			'usedAttributes' => [
@@ -145,6 +135,46 @@ final class PreProcessor{
 				$expression = $printer->prettyPrintExpr($node);
 				Logger::info("[{$this->printLinePos($node, $scope)}] Commented out " . str_replace(PHP_EOL, "", $expression));
 				return new ConstFetch(new Name("/* {$expression} */"));
+			});
+		}
+
+		return $this;
+	}
+
+	/**
+	 * Example for $types: ["int", "string", "array", mysqli::class]
+	 *
+	 * @param string[] $types
+	 * @return self
+	 */
+	public function removeTypeFromMethodParameters(array $types) : self{
+		$done = 0;
+		$total = count($this->parsed_files);
+		foreach($this->parsed_files as $path => $file){
+			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for types to remove");
+			$file->visitClassMethods(static function(ClassMethod $node, Scope $scope, string $class, string $method) use($types){
+				if($node->isPrivate() || $node->isFinal() || $scope->getClassReflection()->isFinal()){
+					$changed = false;
+					foreach($node->params as $x => $param){
+						if($param->type !== null){
+							$type_string = "";
+							if($param->type instanceof NullableType){
+								$type = $param->type->type;
+								$type_string .= "?";
+							}else{
+								$type = $param->type;
+							}
+							$type_string .= $type->toString();
+							if(in_array(($param->type instanceof NullableType ? $param->type->type : $param->type)->toString(), $types, true)){
+								Logger::info("Removed type {$type_string} from parameter \"{$param->var->name}\" of method {$class}::{$method}");
+								$param->type = null;
+								$changed = true;
+							}
+						}
+					}
+					return $changed ? $node : null;
+				}
+				return null;
 			});
 		}
 

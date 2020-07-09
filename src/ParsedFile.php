@@ -98,7 +98,7 @@ final class ParsedFile{
 	/**
 	 * @param Closure[] $visitors
 	 *
-	 * @phpstan-param Closure(Node Scope, string) : null|int|Node ...$visitors
+	 * @phpstan-param Closure(Node, Scope, string) : null|int|Node ...$visitors
 	 */
 	public function visitWithScope(Closure ...$visitors) : void{
 		$this->visit(function(Node $node) use($visitors){
@@ -168,7 +168,7 @@ final class ParsedFile{
 	 * @param Closure[] $visitors
 	 *
 	 * @phpstan-param class-string $class
-	 * @phpstan-param Closure(ClassMethod $node, Scope, string $class, string $method) : null|int|Node ...$visitors
+	 * @phpstan-param Closure(ClassMethod $node, Scope $scope, string $class, string $method) : null|int|Node ...$visitors
 	 */
 	public function visitClassMethods(Closure ...$visitors) : void{
 		$this->visitWithScope(static function(Node $node, Scope $scope, string $index) use($visitors){
