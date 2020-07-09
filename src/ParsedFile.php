@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace muqsit\preprocessor;
 
 use Closure;
+use InvalidArgumentException;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\MethodCall;
@@ -89,6 +90,10 @@ final class ParsedFile{
 	 * @phpstan-param Closure(MethodCall|StaticCall) : null|int|Node ...$visitors
 	 */
 	public function visitClassMethods(string $class, string $method, Closure ...$visitors) : void{
+		if(!method_exists($class, $method)){
+			throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
+		}
+
 		$class_type = new ObjectType($class);
 		$method = strtolower($method);
 		$this->visit(static function(Expr $expr, Scope $scope, string $index) use($class_type, $method, $visitors){
