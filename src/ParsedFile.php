@@ -5,13 +5,15 @@ declare(strict_types=1);
 namespace muqsit\preprocessor;
 
 use Closure;
+use Error;
+use Exception;
 use InvalidArgumentException;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
-use PhpParser\Node\Scalar\EncapsedStringPart;
+use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\NodeVisitor\NameResolver;
@@ -19,13 +21,22 @@ use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\Scope;
 use PHPStan\Type\ObjectType;
+use SplFileInfo;
 
 final class ParsedFile{
 
-	public static function exprHash(Expr $node) : ?string{
+	public static function nodeHash(Node $node) : ?string{
+		// TODO: Make hash of $node->getLine() : $node->getStartTokenPos() : $node->getEndTokenPos() instead - phpstan disables token positions in nodes
 		static $printer = null;
-		return $node instanceof EncapsedStringPart ? null : $node->getLine() . ":" . ($printer ?? $printer = new Standard())->prettyPrintExpr($node);
+		try{
+			return $node->getLine() . ":" . ($printer ?? $printer = new Standard())->prettyPrint([$node]);
+		}catch(Exception | Error $e){
+		}
+		return null;
 	}
+
+	/** @var SplFileInfo */
+	private $file;
 
 	/** @var Scope[] */
 	private $scopes;
@@ -40,11 +51,13 @@ final class ParsedFile{
 	private $tokens_original;
 
 	/**
+	 * @param SplFileInfo $file
 	 * @param array $scopes
 	 * @param array $nodes_original
 	 * @param array $tokens_original
 	 */
-	public function __construct(array $scopes, array $nodes_original, array $tokens_original){
+	public function __construct(SplFileInfo $file, array $scopes, array $nodes_original, array $tokens_original){
+		$this->file = $file;
 		$this->scopes = $scopes;
 		$this->nodes_original = $nodes_original;
 		$this->tokens_original = $tokens_original;
@@ -58,21 +71,22 @@ final class ParsedFile{
 		$this->nodes_modified = $traverser->traverse($this->nodes_original);
 	}
 
+	public function getFile() : SplFileInfo{
+		return $this->file;
+	}
+
 	/**
 	 * @param Closure[] $visitors
 	 *
-	 * @phpstan-param Closure(Expr, Scope, string) : null|int|Node ...$visitors
+	 * @phpstan-param Closure(Node) : null|int|Node ...$visitors
 	 */
 	public function visit(Closure ...$visitors) : void{
 		$traverser = new NodeTraverser();
-		$traverser->addVisitor(new ClosureNodeVisitor(function(Node $node) use($visitors){
-			if($node instanceof Expr && ($scope_index = self::exprHash($node)) !== null && isset($this->scopes[$scope_index])){
-				$scope = $this->scopes[$scope_index];
-				foreach($visitors as $visitor){
-					$result = $visitor($node, $scope, $scope_index);
-					if($result !== null){
-						return $result;
-					}
+		$traverser->addVisitor(new ClosureNodeVisitor(static function(Node $node) use($visitors){
+			foreach($visitors as $visitor){
+				$result = $visitor($node);
+				if($result !== null){
+					return $result;
 				}
 			}
 			return null;
@@ -82,42 +96,62 @@ final class ParsedFile{
 	}
 
 	/**
+	 * @param Closure[] $visitors
+	 *
+	 * @phpstan-param Closure(Node Scope, string) : null|int|Node ...$visitors
+	 */
+	public function visitWithScope(Closure ...$visitors) : void{
+		$this->visit(function(Node $node) use($visitors){
+			if(($scope_index = self::nodeHash($node)) !== null && isset($this->scopes[$scope_index])){
+				$scope = $this->scopes[$scope_index];
+				foreach($visitors as $visitor){
+					$result = $visitor($node, $scope, $scope_index);
+					if($result !== null){
+						return $result;
+					}
+				}
+			}
+			return null;
+		});
+	}
+
+	/**
 	 * @param string $class
 	 * @param string $method
 	 * @param Closure ...$visitors
 	 *
 	 * @phpstan-param class-string $class
-	 * @phpstan-param Closure(MethodCall|StaticCall) : null|int|Node ...$visitors
+	 * @phpstan-param Closure(MethodCall|StaticCall, Scope) : null|int|Node ...$visitors
 	 */
-	public function visitClassMethods(string $class, string $method, Closure ...$visitors) : void{
+	public function visitMethodCalls(string $class, string $method, Closure ...$visitors) : void{
 		if(!method_exists($class, $method)){
 			throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
 		}
 
 		$class_type = new ObjectType($class);
 		$method = strtolower($method);
-		$this->visit(static function(Expr $expr, Scope $scope, string $index) use($class_type, $method, $visitors){
-			if($scope instanceof MutatingScope){
-				if($expr instanceof MethodCall){
-					if($expr->name instanceof Identifier && $expr->name->toLowerString() === $method){
-						$type = $scope->getType($expr->var);
+		$this->visitWithScope(static function(Node $node, Scope $scope, string $index) use($class_type, $method, $visitors){
+			if($node instanceof Expr && $scope instanceof MutatingScope){
+				if($node instanceof MethodCall){
+					if($node->name instanceof Identifier && $node->name->toLowerString() === $method){
+						$type = $scope->getType($node->var);
 						if($class_type->accepts($type, true)){
 							foreach($visitors as $visitor){
-								$return = $visitor($expr);
+								$return = $visitor($node, $scope);
 								if($return !== null){
 									return $return;
 								}
 							}
 						}
 					}
-				}elseif($expr instanceof StaticCall){
+				}elseif($node instanceof StaticCall){
 					if(
-						$expr->name instanceof Identifier &&
-						$expr->name->toLowerString() === $method &&
-						$class_type->accepts(new ObjectType($expr->name->toString()), true)
+						$node->name instanceof Identifier &&
+						$node->name->toLowerString() === $method &&
+						$class_type->accepts(new ObjectType($node->name->toString()), true)
 					){
 						foreach($visitors as $visitor){
-							$return = $visitor($expr);
+							$return = $visitor($node, $scope);
 							if($return !== null){
 								return $return;
 							}
@@ -128,6 +162,58 @@ final class ParsedFile{
 
 			return null;
 		});
+	}
+
+	/**
+	 * @param Closure[] $visitors
+	 *
+	 * @phpstan-param class-string $class
+	 * @phpstan-param Closure(ClassMethod $node, Scope, string $class, string $method) : null|int|Node ...$visitors
+	 */
+	public function visitClassMethods(Closure ...$visitors) : void{
+		$this->visitWithScope(static function(Node $node, Scope $scope, string $index) use($visitors){
+			if($node instanceof ClassMethod && $scope instanceof MutatingScope){
+				if($node->name instanceof Identifier){
+					$class = $scope->getClassReflection()->getName();
+					$method = $node->name->toString();
+					foreach($visitors as $visitor){
+						$result = $visitor($node, $scope, $class, $method);
+						if($result !== null){
+							return $result;
+						}
+					}
+				}
+			}
+
+			return null;
+		});
+	}
+
+	/**
+	 * @param string $class
+	 * @param string $method
+	 * @return ClassMethod
+	 *
+	 * @phpstan-param class-string $class
+	 * @phpstan-param Closure(ClassMethod) : null|int|Node ...$visitors
+	 */
+	public function getMethodNode(string $class, string $method) : ClassMethod{
+		if(!method_exists($class, $method)){
+			throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
+		}
+
+		/** @var ClassMethod|null $method_node */
+		$method_node = null;
+
+		$method = strtolower($method);
+		$this->visitClassMethods(static function(ClassMethod $node, Scope $scope, string $class_name, string $method_name) use($class, $method, &$method_node){
+			if(strtolower($method_name) === $method && is_a($class_name, $class, true)){
+				$method_node = $node;
+			}
+			return null;
+		});
+
+		return $method_node;
 	}
 
 	public function export() : string{

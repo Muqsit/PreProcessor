@@ -6,6 +6,7 @@ namespace muqsit\preprocessor;
 
 use Exception;
 use InvalidArgumentException;
+use ParseError;
 use PhpParser\Lexer\Emulative;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
@@ -27,7 +28,21 @@ final class PreProcessor{
 	 * @return self
 	 */
 	public static function fromPaths(array $paths) : self{
-		return new self($paths);
+		$files = [];
+		foreach($paths as $path){
+			if(!file_exists($path)){
+				throw new InvalidArgumentException("File {$path} does not exist");
+			}
+
+			$file = new SplFileInfo($path);
+			if($file->getExtension() !== "php"){
+				throw new InvalidArgumentException("{$path} is not a .php file");
+			}
+
+			$files[] = $file;
+		}
+
+		return new self($files);
 	}
 
 	/**
@@ -39,45 +54,52 @@ final class PreProcessor{
 			throw new InvalidArgumentException("Directory {$directory} does not exist");
 		}
 
-		$paths = [];
+		$files = [];
 		/** @var SplFileInfo $file */
 		foreach((new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory))) as $file){
 			if($file->getExtension() === "php"){
-				$paths[] = $file->getRealPath();
+				$files[] = $file;
 			}
 		}
 
-		return new self($paths);
+		return new self($files);
 	}
 
 	/** @var ParsedFile[] */
 	private $parsed_files = [];
 
 	/**
-	 * @param string[] $paths
+	 * @param SplFileInfo[] $files
 	 */
-	public function __construct(array $paths){
+	public function __construct(array $files){
 		$scope_holders = [];
 		NotifierRule::registerListener($listener = function(Node $node, Scope $scope) use(&$scope_holders) : void{
-			if($node instanceof Expr){
-				$index = ParsedFile::exprHash($node);
-				if($index !== null){
-					$scope_holders[(new SplFileInfo($scope->getFile()))->getRealPath()][$index] = $scope;
-				}
+			$index = ParsedFile::nodeHash($node);
+			if($index !== null){
+				$scope_holders[(new SplFileInfo($scope->getFile()))->getRealPath()][$index] = $scope;
 			}
 		});
 
+		$neon_file_path = (new SplFileInfo(__DIR__ . "/../resources/phpstan.neon"))->getRealPath();
 		$containerFactory = new ContainerFactory('/tmp');
-		$container = $containerFactory->create('/tmp', [sprintf('%s/config.level%s.neon', $containerFactory->getConfigDirectory(), 8), "phpstan.neon"], []);
+		$container = $containerFactory->create('/tmp', [sprintf('%s/config.level%s.neon', $containerFactory->getConfigDirectory(), 0), $neon_file_path], []);
 
 		/** @var Analyser $analyser */
 		$analyser = $container->getByType(Analyser::class);
 
 		$done = 0;
-		$total = count($paths);
-		$analyser->analyse($paths, static function(string $file) use($total, &$done) : void{
+		$total = count($files);
+		$paths = array_map(static function(SplFileInfo $file) : string{ return $file->getRealPath(); }, $files);
+		$errors = $analyser->analyse($paths, static function(string $file) use($total, &$done) : void{
 			Logger::info("[" . ++$done . " / {$total}] phpstan >> Reading {$file}");
 		}, null, false, $paths)->getErrors();
+		if(count($errors) > 0){
+			foreach($errors as $error){
+				Logger::warning("PHPStan >> Error");
+				Logger::error("[{$error->getFile()}:{$error->getNodeLine()}] {$error->getMessage()}");
+			}
+			throw new ParseError("PHPStan failed to parse files");
+		}
 
 		NotifierRule::unregisterListener($listener);
 
@@ -92,12 +114,17 @@ final class PreProcessor{
 		$parser = new Php7($lexer);
 
 		$done = 0;
-		foreach($scope_holders as $path => $scopes){
+		foreach($files as $file){
+			$path = $file->getRealPath();
 			Logger::info("[" . ++$done . " / {$total}] php-parser >> Reading {$path}");
 			$nodes_original = $parser->parse(file_get_contents($path));
 			$tokens_original = $lexer->getTokens();
-			$this->parsed_files[$path] = new ParsedFile($scopes, $nodes_original, $tokens_original);
+			$this->parsed_files[$path] = new ParsedFile($file, $scope_holders[$path] ?? [], $nodes_original, $tokens_original);
 		}
+	}
+
+	private function printLinePos(Node $node, Scope $scope) : string{
+		return $scope->isInClass() ? "{$scope->getClassReflection()->getName()}:{$node->getLine()}" : "{$scope->getFile()}:{$node->getLine()}";
 	}
 
 	/**
@@ -114,9 +141,9 @@ final class PreProcessor{
 
 		foreach($this->parsed_files as $path => $file){
 			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for {$class}::{$method} references in {$path}");
-			$file->visitClassMethods($class, $method, function(Expr $node) use($printer){
+			$file->visitMethodCalls($class, $method, function(Expr $node, Scope $scope) use($printer){
 				$expression = $printer->prettyPrintExpr($node);
-				Logger::info("Commented out " . str_replace(PHP_EOL, "", $expression));
+				Logger::info("[{$this->printLinePos($node, $scope)}] Commented out " . str_replace(PHP_EOL, "", $expression));
 				return new ConstFetch(new Name("/* {$expression} */"));
 			});
 		}
