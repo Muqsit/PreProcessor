@@ -31,7 +31,7 @@ final class Client{
 
 	public function onLogin(){
 -		$this->logger->debug("Client logged in");
-+		/* $this->logger->debug("Client logged in "); */
++		/* $this->logger->debug("Client logged in ") */;
 	}
 }
 ```
@@ -58,15 +58,15 @@ final class Player extends Client implements LoggerHolder{
 
 	public function onJoin() : void{
 -		$this->getLogger()->debug("Player {$this->getUUID()} joined");
-+		/* $this->getLogger()->debug("Player {$this->getUUID()} joined"); */
++		/* $this->getLogger()->debug("Player {$this->getUUID()} joined") */;
 
 -		$this->sendMessage("You joined the server"); $this->debugClientStatus();
-+		$this->sendMessage("You joined the server"); /* $this->debugClientStatus(); */
++		$this->sendMessage("You joined the server"); /* $this->debugClientStatus() */;
 	}
 
 	public function registerQuitListener(Closure $listener) : void{
 -		Utils::validateCallableSignature(function(Player $player) : void{}, $listener);
-+		/* Utils::validateCallableSignature(function(Player $player) : void{}, $listener); */
++		/* Utils::validateCallableSignature(function(Player $player) : void{}, $listener) */;
 	}
 }
 ```
