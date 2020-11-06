@@ -13,6 +13,12 @@ final class ClosureNodeVisitor extends NodeVisitorAbstract{
 	/** @var Closure */
 	private $enter_node;
 
+	/**
+	 * @param Closure $enter_node
+	 *
+	 * @phpstan-param Closure(Node) : Node|int $enter_node
+	 * @see NodeTraverser for return values
+	 */
 	public function __construct(Closure $enter_node){
 		$this->enter_node = $enter_node;
 	}

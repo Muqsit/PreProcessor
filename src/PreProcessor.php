@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace muqsit\preprocessor;
 
-use Closure;
 use Exception;
 use InvalidArgumentException;
 use PhpParser\Lexer\Emulative;
@@ -14,6 +13,7 @@ use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Name;
 use PhpParser\Node\NullableType;
 use PhpParser\Node\Stmt\ClassMethod;
+use PhpParser\NodeTraverser;
 use PhpParser\Parser\Php7;
 use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\Analyser;
@@ -136,6 +136,48 @@ final class PreProcessor{
 				Logger::info("[{$this->printLinePos($node, $scope)}] Commented out " . str_replace(PHP_EOL, "", $expression));
 				return new ConstFetch(new Name("/* {$expression} */"));
 			});
+		}
+
+		return $this;
+	}
+
+	/**
+	 * @param string $class
+	 * @param string $method
+	 * @return self
+	 *
+	 * @phpstan-param class-string $class
+	 */
+	public function inlineMethodCall(string $class, string $method) : self{
+		foreach($this->parsed_files as $path => $file){
+			$method_node = $file->getMethodNode($class, $method);
+			$stmts = $method_node->getStmts();
+			if(count($stmts) === 1){
+				$params = [];
+				foreach($method_node->params as $param){
+					$params[] = $param->var->name;
+				}
+
+				$traverse_stmts = [];
+				foreach($stmts as $stmt){
+					$traverse_stmts[] = $stmt->expr;
+				}
+
+				$file->visitMethodCalls($class, $method, function(Expr $node, Scope $scope) use($traverse_stmts, $params){
+					assert($node instanceof Expr\MethodCall || $node instanceof Expr\StaticCall);
+
+					$mapping = [];
+					foreach($node->args as $index => $arg){
+						$mapping[$params[$index]] = $arg->value;
+					}
+
+					$traverser = new NodeTraverser();
+					$traverser->addVisitor(new ClosureNodeVisitor(function(Node $node) use($mapping) {
+						return $node instanceof Expr\Variable ? clone $mapping[$node->name] : clone $node;
+					}));
+					return $traverser->traverse($traverse_stmts)[0];
+				});
+			}
 		}
 
 		return $this;
