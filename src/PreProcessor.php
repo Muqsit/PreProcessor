@@ -145,15 +145,16 @@ final class PreProcessor{
 		$printer = new Standard();
 
 		foreach($this->parsed_files as $path => $file){
-			$file->visit(function(Node $node) use($printer){
+			$file->visit(function(Node $node) use($printer, $path){
 				if(
 					$node instanceof Expr\FuncCall &&
 					($namespaced_name = $node->name->getAttribute("namespacedName")) !== null &&
-					!function_exists(implode("\\", $namespaced_name->parts))
+					!function_exists(implode("\\", $namespaced_name->parts)) &&
+					function_exists("\\" . implode("\\", $node->name->parts))
 				){
 					$new = clone $node;
-					$new->name = new Name\FullyQualified(["count"]);
-					Logger::info("Replaced function call with unqualified name {$printer->prettyPrintExpr($node)} with fully qualified name {$printer->prettyPrintExpr($new)}");
+					$new->name = new Name\FullyQualified($node->name->parts);
+					Logger::info("Replaced function call with unqualified name {$printer->prettyPrintExpr($node)} with fully qualified name {$printer->prettyPrintExpr($new)} in {$path}");
 					return $new;
 				}
 				return null;
