@@ -141,6 +141,28 @@ final class PreProcessor{
 		return $this;
 	}
 
+	public function replaceUQFunctionNamesToFQ() : self{
+		$printer = new Standard();
+
+		foreach($this->parsed_files as $path => $file){
+			$file->visit(function(Node $node) use($printer){
+				if(
+					$node instanceof Expr\FuncCall &&
+					($namespaced_name = $node->name->getAttribute("namespacedName")) !== null &&
+					!function_exists(implode("\\", $namespaced_name->parts))
+				){
+					$new = clone $node;
+					$new->name = new Name\FullyQualified(["count"]);
+					Logger::info("Replaced function call with unqualified name {$printer->prettyPrintExpr($node)} with fully qualified name {$printer->prettyPrintExpr($new)}");
+					return $new;
+				}
+				return null;
+			});
+		}
+
+		return $this;
+	}
+
 	/**
 	 * @param string $class
 	 * @param string $method
