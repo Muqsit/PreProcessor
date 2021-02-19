@@ -226,7 +226,7 @@ final class PreProcessor{
 					){
 						$key_type = $scope->getType($var->dim);
 						if(!($key_type->toInteger() instanceof ErrorType) || !($key_type->toString() instanceof ErrorType)){
-							$array_key_exists_fcall = new Expr\FuncCall(new Name("array_key_exists"), [$var->dim, $var->var]);
+							$array_key_exists_fcall = new Expr\FuncCall(new Name\FullyQualified(["array_key_exists"]), [$var->dim, $var->var]);
 							Logger::info("Replaced isset -> array_key_exists: {$printer->prettyPrintExpr($node)} -> {$printer->prettyPrintExpr($array_key_exists_fcall)} in {$path}");
 							return $array_key_exists_fcall;
 						}
