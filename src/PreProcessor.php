@@ -212,8 +212,9 @@ final class PreProcessor{
 	 * @phpstan-param class-string $class
 	 */
 	public function replaceIssetWithArrayKeyExists() : self{
+		$printer = new Standard();
 		foreach($this->parsed_files as $path => $file){
-			$file->visitWithScope(function(Node $node, Scope $scope, string $index){
+			$file->visitWithScope(function(Node $node, Scope $scope, string $index) use($path, $printer) {
 				if(
 					$node instanceof Expr\Isset_ &&
 					count($node->vars) === 1 // TODO: Add support for multiple parameters
@@ -225,7 +226,9 @@ final class PreProcessor{
 					){
 						$key_type = $scope->getType($var->dim);
 						if(!($key_type->toInteger() instanceof ErrorType) || !($key_type->toString() instanceof ErrorType)){
-							return new Expr\FuncCall(new Name("array_key_exists"), [$var->dim, $var->var]);
+							$array_key_exists_fcall = new Expr\FuncCall(new Name("array_key_exists"), [$var->dim, $var->var]);
+							Logger::info("Replaced isset -> array_key_exists: {$printer->prettyPrintExpr($node)} -> {$printer->prettyPrintExpr($array_key_exists_fcall)} in {$path}");
+							return $array_key_exists_fcall;
 						}
 					}
 				}
