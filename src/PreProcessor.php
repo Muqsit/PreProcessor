@@ -19,6 +19,7 @@ use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\Analyser;
 use PHPStan\Analyser\Scope;
 use PHPStan\DependencyInjection\ContainerFactory;
+use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
@@ -78,9 +79,8 @@ final class PreProcessor{
 			}
 		});
 
-		$neon_file_path = (new SplFileInfo(__DIR__ . "/../resources/phpstan.neon"))->getRealPath();
 		$containerFactory = new ContainerFactory('/tmp');
-		$container = $containerFactory->create('/tmp', [sprintf('%s/config.level%s.neon', $containerFactory->getConfigDirectory(), 0), $neon_file_path], []);
+		$container = $containerFactory->create('/tmp', [sprintf('%s/config.level%s.neon', $containerFactory->getConfigDirectory(), 0), ["rules" => [NotifierRule::class]]], []);
 
 		/** @var Analyser $analyser */
 		$analyser = $container->getByType(Analyser::class);
@@ -201,6 +201,35 @@ final class PreProcessor{
 					return $traverser->traverse($traverse_stmts)[0];
 				});
 			}
+		}
+
+		return $this;
+	}
+
+	/**
+	 * @return self
+	 *
+	 * @phpstan-param class-string $class
+	 */
+	public function replaceIssetWithArrayKeyExists() : self{
+		foreach($this->parsed_files as $path => $file){
+			$file->visitWithScope(function(Node $node, Scope $scope, string $index){
+				if(
+					$node instanceof Expr\Isset_ &&
+					count($node->vars) === 1 // TODO: Add support for multiple parameters
+				){
+					$var = $node->vars[0];
+					if(
+						$var instanceof Expr\ArrayDimFetch &&
+						$scope->getType($var->var)->isArray()->yes()
+					){
+						$key_type = $scope->getType($var->dim);
+						if(!($key_type->toInteger() instanceof ErrorType) || !($key_type->toString() instanceof ErrorType)){
+							return new Expr\FuncCall(new Name("array_key_exists"), [$var->dim, $var->var]);
+						}
+					}
+				}
+			});
 		}
 
 		return $this;
