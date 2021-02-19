@@ -16,9 +16,10 @@ use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\NodeTraverser;
 use PhpParser\Parser\Php7;
 use PhpParser\PrettyPrinter\Standard;
-use PHPStan\Analyser\Analyser;
+use PHPStan\Analyser\FileAnalyser;
 use PHPStan\Analyser\Scope;
 use PHPStan\DependencyInjection\ContainerFactory;
+use PHPStan\Rules\Registry;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -71,28 +72,26 @@ final class PreProcessor{
 	 * @param SplFileInfo[] $files
 	 */
 	public function __construct(array $files){
-		$scope_holders = [];
-		NotifierRule::registerListener($listener = function(Node $node, Scope $scope) use(&$scope_holders) : void{
-			$index = ParsedFile::nodeHash($node);
-			if($index !== null){
-				$scope_holders[(new SplFileInfo($scope->getFile()))->getRealPath()][$index] = $scope;
-			}
-		});
-
 		$containerFactory = new ContainerFactory('/tmp');
-		$container = $containerFactory->create('/tmp', [sprintf('%s/config.level%s.neon', $containerFactory->getConfigDirectory(), 0), ["rules" => [NotifierRule::class]]], []);
-
-		/** @var Analyser $analyser */
-		$analyser = $container->getByType(Analyser::class);
+		$container = $containerFactory->create('/tmp', [], []);
 
 		$done = 0;
 		$total = count($files);
-		$paths = array_map(static function(SplFileInfo $file) : string{ return $file->getRealPath(); }, $files);
-		$analyser->analyse($paths, static function(string $file) use($total, &$done) : void{
-			Logger::info("[" . ++$done . " / {$total}] phpstan >> Reading {$file}");
-		}, null, false, $paths);
+		$scope_holders = [];
 
-		NotifierRule::unregisterListener($listener);
+		/** @var FileAnalyser $file_analyser */
+		$file_analyser = $container->getByType(FileAnalyser::class);
+		$registry = new Registry([]);
+		foreach($files as $file){
+			$path = $file->getRealPath();
+			$file_analyser->analyseFile($path, [], $registry, function(Node $node, Scope $scope) use($path, &$scope_holders){
+				$index = ParsedFile::nodeHash($node);
+				if($index !== null){
+					$scope_holders[$path][$index] = $scope;
+				}
+			});
+			Logger::info("[" . ++$done . " / {$total}] phpstan >> Reading {$path}");
+		}
 
 		$lexer = new Emulative([
 			'usedAttributes' => [
