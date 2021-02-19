@@ -74,6 +74,11 @@ final class PreProcessor{
 	public function __construct(array $files){
 		$containerFactory = new ContainerFactory('/tmp');
 		$container = $containerFactory->create('/tmp', [], []);
+		foreach($container->getParameter("bootstrapFiles") as $bootstrapFile){
+			(static function (string $file) use ($container): void {
+				require_once $file;
+			})($bootstrapFile);
+		}
 
 		$done = 0;
 		$total = count($files);
