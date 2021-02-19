@@ -211,6 +211,11 @@ final class PreProcessor{
 	}
 
 	/**
+	 * WARNING: This preprocessing is quite aggressive as it breaks cases where
+	 * nullable values are stored in arrays.
+	 * In $a = ["key" => null] for example, isset($a["key"]) would return false
+	 * while array_key_exists("key", $a) returns true.
+	 *
 	 * @return self
 	 *
 	 * @phpstan-param class-string $class
