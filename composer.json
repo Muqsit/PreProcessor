@@ -4,7 +4,7 @@
     "type": "library",
     "license": "LGPL-3.0",
     "require": {
-        "php": "^7.4",
+        "php": "^8.0",
         "phpstan/phpstan": "0.12.92",
         "nikic/php-parser": "4.11.0"
     },
