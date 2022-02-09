@@ -6,7 +6,7 @@
     "require": {
         "php": "^8.0",
         "phpstan/phpstan": "1.2.0",
-        "nikic/php-parser": "4.13.1"
+        "nikic/php-parser": "4.13.2"
     },
     "autoload": {
         "psr-4": {
