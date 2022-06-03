@@ -5,7 +5,7 @@
     "license": "LGPL-3.0",
     "require": {
         "php": "^8.0",
-        "phpstan/phpstan": "1.6.8",
+        "phpstan/phpstan": "1.7.8",
         "nikic/php-parser": "4.14.0"
     },
     "autoload": {
