@@ -20,19 +20,44 @@ use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\Scope;
+use PHPStan\Node\ClassConstantsNode;
+use PHPStan\Node\MethodReturnStatementsNode;
 use PHPStan\Type\ObjectType;
 use SplFileInfo;
+use function array_push;
+use function implode;
+use function str_contains;
+use function var_dump;
 
 final class ParsedFile{
 
 	public static function nodeHash(Node $node) : ?string{
-		// TODO: Make hash of $node->getLine() : $node->getStartTokenPos() : $node->getEndTokenPos() instead - phpstan disables token positions in nodes
-		static $printer = null;
-		try{
-			return $node->getLine() . ":" . ($printer ?? $printer = new Standard())->prettyPrint([$node]);
-		}catch(Exception | Error $e){
+		$node_type = match($node::class){ // TODO: remove this once https://github.com/phpstan/phpstan-src/pull/1568 is merged
+			ClassConstantsNode::class => "PHPStan_Node_ClassConstantsNode",
+			MethodReturnStatementsNode::class => "PHPStan_Node_MethodReturnStatementsNode",
+			default => $node->getType()
+		};
+
+		$tokens = [$node->getLine()];
+
+		$add_non_expr_tokens = true;
+		if($node instanceof Expr){
+			try{
+				static $printer = null;
+				$printer ??= new Standard();
+				$tokens[] = $printer->prettyPrintExpr($node);
+				$add_non_expr_tokens = false;
+			}catch(Error | Exception){
+			}
 		}
-		return null;
+		if($add_non_expr_tokens){
+			array_push($tokens, $node_type, $node->getStartLine(), $node->getEndLine(), $node->getStartTokenPos());
+		}
+		if(str_contains(implode(":", $tokens), '$this->getPlayer()->getUniqueId()->toString()')){
+			var_dump(implode(":", $tokens));
+			echo (new \Exception)->getTraceAsString(), PHP_EOL;
+		}
+		return implode(":", $tokens);
 	}
 
 	/** @var SplFileInfo */

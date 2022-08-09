@@ -12,18 +12,26 @@ use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Name;
 use PhpParser\Node\NullableType;
+use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\NodeTraverser;
 use PhpParser\Parser\Php7;
 use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\FileAnalyser;
+use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\DependencyInjection\ContainerFactory;
 use PHPStan\Rules\Registry;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use RuntimeException;
 use SplFileInfo;
+use function array_key_exists;
+use function assert;
+use function count;
+use function current;
+use function var_dump;
 
 final class PreProcessor{
 
@@ -87,11 +95,22 @@ final class PreProcessor{
 		/** @var FileAnalyser $file_analyser */
 		$file_analyser = $container->getByType(FileAnalyser::class);
 		$registry = new Registry([]);
+		$collector_registry = new \PHPStan\Collectors\Registry([]);
 		foreach($files as $file){
 			$path = $file->getRealPath();
-			$file_analyser->analyseFile($path, [], $registry, function(Node $node, Scope $scope) use($path, &$scope_holders){
+			$file_analyser->analyseFile($path, [], $registry, $collector_registry, function(Node $node, Scope $scope) use($path, &$scope_holders, $container){
+				/** @var NodeScopeResolver $resolver */
+				$resolver = $container->getByType(NodeScopeResolver::class);
+				$resolver->processNodes([$node], $scope, function(Node $node, Scope $scope) : void{
+					// var_dump((new Standard)->prettyPrint([$node]));
+					var_dump($node::class);
+				});
+
 				$index = ParsedFile::nodeHash($node);
 				if($index !== null){
+					if(array_key_exists($path, $scope_holders) && array_key_exists($index, $scope_holders[$path])){
+						throw new RuntimeException("Found node hash collision when reading {$path}");
+					}
 					$scope_holders[$path][$index] = $scope;
 				}
 			});
@@ -284,6 +303,103 @@ final class PreProcessor{
 			});
 		}
 
+		return $this;
+	}
+
+	public function optimizeFinalGetters() : self{
+		$done = 0;
+		$total = count($this->parsed_files);
+
+		$non_public_properties = [];
+		$method_to_property_mapping = [];
+		foreach($this->parsed_files as $path => $file){
+			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for final class getters to optimize");
+			$file->visitClassMethods(static function(ClassMethod $node, Scope $scope, string $class, string $method) use(&$method_to_property_mapping, &$non_public_properties, $path){
+				$class_reflection = $scope->getClassReflection();
+				if(
+					$class_reflection === null || // scope is not in a class
+					$node->isPrivate() ||
+					(!$class_reflection->isFinal() && !$node->isFinal()) ||
+					$class_reflection->getParentClass() !== null
+				){
+					return null;
+				}
+
+				if(count($node->stmts) !== 1){
+					return null;
+				}
+
+				$stmt = current($node->stmts);
+				assert($stmt !== false);
+				if(
+					!($stmt instanceof Node\Stmt\Return_) ||
+					!($stmt->expr instanceof Expr\PropertyFetch) ||
+					!($stmt->expr->var instanceof Expr\Variable) ||
+					$stmt->expr->var->name !== "this"
+				){
+					return null;
+				}
+
+				$method_to_property_mapping["{$class}::{$method}"] = [$class, $method, $stmt->expr->name->name];
+
+				$property = $class_reflection->getProperty($stmt->expr->name->name, $scope);
+				if(!$property->isPublic()){
+					$non_public_properties["{$class}::{$stmt->expr->name->name}"] = [$path, $class, $stmt->expr->name->name];
+				}
+				return null;
+			});
+		}
+
+		$printer = new Standard();
+		$done = 0;
+		$total = count($non_public_properties);
+		foreach($non_public_properties as [$path, $class, $property]){
+			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Updating visibility of final class getters");
+			$this->parsed_files[$path]->visitWithScope(static function(Node $node, Scope $scope, string $index) use($class, $property, $path) {
+				$class_reflection = $scope->getClassReflection();
+				if($class_reflection === null || $class_reflection->getName() !== $class){
+					return null;
+				}
+
+				if($node instanceof Node\Stmt\Property){
+					// check for non constructor promoted properties
+					if($node->props[0]->name->name !== $property){
+						return null;
+					}
+				}elseif($node instanceof Node\Param){
+					// check for constructor promoted properties
+					if(
+						($node->flags & Class_::VISIBILITY_MODIFIER_MASK) === 0 || // has no visibility specified
+						($node->flags & Class_::MODIFIER_PUBLIC) !== 0 // has public visibility
+					){
+						return null;
+					}
+				}else{
+					return null;
+				}
+
+				$node->flags = Class_::MODIFIER_PUBLIC;
+				Logger::info("Updated visibility of property {$class}::\${$property} to public in {$path}");
+				return $node;
+			});
+		}
+
+		$done = 0;
+		$total = count($method_to_property_mapping);
+		foreach($method_to_property_mapping as [$class, $method, $property]){
+			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Replacing getter method calls with property-fetch");
+			foreach($this->parsed_files as $path => $file){
+				$file->visitMethodCalls($class, $method, function(Expr $node, Scope $scope) use($property, $printer, $path){
+					if(!($node instanceof Expr\MethodCall)){
+						return null;
+					}
+
+					$replacement = new Expr\PropertyFetch($node->var, $property);
+					Logger::info("Replaced getter method call {$printer->prettyPrintExpr($node)} with property call {$printer->prettyPrintExpr($replacement)} in {$path}");
+					return $replacement;
+				});
+			}
+		}
 		return $this;
 	}
 
