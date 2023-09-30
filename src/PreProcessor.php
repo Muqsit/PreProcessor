@@ -15,25 +15,17 @@ use PhpParser\Node\NullableType;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\NodeTraverser;
-use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\Parser\Php7;
 use PhpParser\PrettyPrinter\Standard;
-use PHPStan\Analyser\FileAnalyser;
 use PHPStan\Analyser\NodeScopeResolver;
-use PHPStan\Analyser\RuleErrorTransformer;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeFactory;
-use PHPStan\Collectors\Registry as CollectorRegistry;
-use PHPStan\Dependency\DependencyResolver;
 use PHPStan\DependencyInjection\Container;
 use PHPStan\DependencyInjection\ContainerFactory;
-use PHPStan\Parser\RichParser;
-use PHPStan\Rules\Registry as RuleRegistry;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
-use function array_key_exists;
 use function assert;
 use function count;
 use function current;
@@ -90,33 +82,14 @@ final class PreProcessor{
 		$container = $this->createContainer();
 		$lexer = $this->createLexer();
 		$parser = new Php7($lexer);
-		$analyser = $this->createAnalyzer($container, $lexer, $parser);
-
 		$done = 0;
 		$total = count($files);
-		$scope_holders = [];
-		foreach($files as $file){
-			$path = $file->getRealPath();
-			Logger::info("[" . ++$done . " / {$total}] phpstan >> Reading {$path}");
-			$analyser->analyseFile($path, [], $container->getByType(RuleRegistry::class), $container->getByType(CollectorRegistry::class), function(Node $node, Scope $scope) use($path, &$scope_holders) : void{
-				$index = ParsedFile::nodeHash($node);
-				if($index !== null){
-					if(array_key_exists($path, $scope_holders) && array_key_exists($index, $scope_holders[$path])){
-						Logger::warning("Found node hash collision ({$index}) when reading {$path} (code section will be ignored)");
-						$scope = null;
-					}
-					$scope_holders[$path][$index] = $scope;
-				}
-			});
-		}
-
-		$done = 0;
 		foreach($files as $file){
 			$path = $file->getRealPath();
 			Logger::info("[" . ++$done . " / {$total}] php-parser >> Reading {$path}");
 			$nodes_original = $parser->parse(file_get_contents($path));
 			$tokens_original = $lexer->getTokens();
-			$this->parsed_files[$path] = new ParsedFile($file, $scope_holders[$path] ?? [], $nodes_original, $tokens_original);
+			$this->parsed_files[$path] = new ParsedFile($container->getByType(ScopeFactory::class), $container->getByType(NodeScopeResolver::class), $file, $nodes_original, $tokens_original);
 		}
 	}
 
@@ -133,17 +106,6 @@ final class PreProcessor{
 
 	private function createLexer() : Lexer{
 		return new Lexer(['usedAttributes' => ['comments', 'startLine', 'endLine', 'startTokenPos', 'endTokenPos']]);
-	}
-
-	private function createAnalyzer(Container $container, Lexer $lexer, Php7 $parser) : FileAnalyser{
-		return new FileAnalyser(
-			$container->getByType(ScopeFactory::class),
-			$container->getByType(NodeScopeResolver::class),
-			new RichParser($parser, $lexer, new NameResolver(), $container),
-			$container->getByType(DependencyResolver::class),
-			$container->getByType(RuleErrorTransformer::class),
-			false
-		);
 	}
 
 	private function printLinePos(Node $node, Scope $scope) : string{
@@ -252,7 +214,7 @@ final class PreProcessor{
 	public function replaceIssetWithArrayKeyExists() : self{
 		$printer = new Standard();
 		foreach($this->parsed_files as $path => $file){
-			$file->visitWithScope(function(Node $node, Scope $scope, string $index) use($path, $printer) {
+			$file->visitWithScope(function(Node $node, Scope $scope) use($path, $printer) {
 				if(
 					$node instanceof Expr\Isset_ &&
 					count($node->vars) === 1 // TODO: Add support for multiple parameters
@@ -365,7 +327,7 @@ final class PreProcessor{
 		$total = count($non_public_properties);
 		foreach($non_public_properties as [$path, $class, $property]){
 			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Updating visibility of final class getters");
-			$this->parsed_files[$path]->visitWithScope(static function(Node $node, Scope $scope, string $index) use($class, $property, $path) {
+			$this->parsed_files[$path]->visitWithScope(static function(Node $node, Scope $scope) use($class, $property, $path) {
 				$class_reflection = $scope->getClassReflection();
 				if($class_reflection === null || $class_reflection->getName() !== $class){
 					return null;

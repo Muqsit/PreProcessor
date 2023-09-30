@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace muqsit\preprocessor;
 
 use Closure;
-use Error;
-use Exception;
 use InvalidArgumentException;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
@@ -19,42 +17,33 @@ use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\MutatingScope;
+use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
+use PHPStan\Analyser\ScopeContext;
+use PHPStan\Analyser\ScopeFactory;
 use PHPStan\Type\ObjectType;
 use SplFileInfo;
+use function spl_object_id;
 
 final class ParsedFile{
-
-	public static function nodeHash(Node $node) : ?string{
-		$tokens = [
-			$node->getType(), $node->getLine(),
-			$node->getStartFilePos(), $node->getEndFilePos(),
-			$node->getStartLine(), $node->getEndLine(),
-			$node->getStartTokenPos(), $node->getEndTokenPos()
-		];
-		if($node instanceof Expr){
-			try{
-				static $printer = null;
-				$printer ??= new Standard();
-				$tokens[] = $printer->prettyPrintExpr($node);
-			}catch(Error | Exception){
-			}
-		}
-		return implode(":", $tokens);
-	}
 
 	/** @var Node[] */
 	private array $nodes_modified;
 
+	/** @var array<int, Scope>|null */
+	private ?array $scopes_cached = null;
+
 	/**
+	 * @param ScopeFactory $scope_factory
+	 * @param NodeScopeResolver $scope_resolver
 	 * @param SplFileInfo $file
-	 * @param Scope[] $scopes
 	 * @param Node[] $nodes_original
 	 * @param Node[] $tokens_original
 	 */
 	public function __construct(
+		readonly private ScopeFactory $scope_factory,
+		readonly private NodeScopeResolver $scope_resolver,
 		readonly public SplFileInfo $file,
-		readonly private array $scopes,
 		readonly private array $nodes_original,
 		readonly private array $tokens_original
 	){
@@ -85,17 +74,27 @@ final class ParsedFile{
 	}
 
 	/**
-	 * @param Closure(Node, Scope, string) : (null|int|Node) ...$visitors
+	 * @param Closure(Node, Scope) : (null|int|Node) ...$visitors
 	 */
 	public function visitWithScope(Closure ...$visitors) : void{
 		$this->visit(function(Node $node) use($visitors){
-			if(($scope_index = self::nodeHash($node)) !== null && isset($this->scopes[$scope_index])){
-				$scope = $this->scopes[$scope_index];
-				foreach($visitors as $visitor){
-					$result = $visitor($node, $scope, $scope_index);
-					if($result !== null){
-						return $result;
-					}
+			if($this->scopes_cached === null){
+				$this->scopes_cached = [];
+				$mutating_scope = $this->scope_factory->create(ScopeContext::create($this->file->getPathname()));
+				$callback = function(Node $node, Scope $scope) : void{
+					$this->scopes_cached[spl_object_id($node)] = $scope;
+				};
+				$this->scope_resolver->processNodes($this->nodes_modified, $mutating_scope, $callback);
+			}
+			if(!isset($this->scopes_cached[$id = spl_object_id($node)])){
+				return null;
+			}
+			$scope = $this->scopes_cached[$id];
+			foreach($visitors as $visitor){
+				$result = $visitor($node, $scope);
+				if($result !== null){
+					$this->scopes_cached = null;
+					return $result;
 				}
 			}
 			return null;
@@ -117,7 +116,7 @@ final class ParsedFile{
 
 		$class_type = new ObjectType($class);
 		$method = strtolower($method);
-		$this->visitWithScope(static function(Node $node, Scope $scope, string $index) use($class_type, $method, $visitors){
+		$this->visitWithScope(static function(Node $node, Scope $scope) use($class_type, $method, $visitors){
 			if($node instanceof Expr && $scope instanceof MutatingScope){
 				if($node instanceof MethodCall){
 					if($node->name instanceof Identifier && $node->name->toLowerString() === $method){
@@ -155,7 +154,7 @@ final class ParsedFile{
 	 * @param Closure(ClassMethod $node, Scope $scope, string $class, string $method) : (null|int|Node) ...$visitors
 	 */
 	public function visitClassMethods(Closure ...$visitors) : void{
-		$this->visitWithScope(static function(Node $node, Scope $scope, string $index) use($visitors){
+		$this->visitWithScope(static function(Node $node, Scope $scope) use($visitors){
 			if($node instanceof ClassMethod && $scope instanceof MutatingScope){
 				if($node->name instanceof Identifier){
 					$class = $scope->getClassReflection()->getName();
