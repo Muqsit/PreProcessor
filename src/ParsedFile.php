@@ -26,19 +26,19 @@ use SplFileInfo;
 final class ParsedFile{
 
 	public static function nodeHash(Node $node) : ?string{
-		$tokens = [$node->getLine(), $node->getStartLine(), $node->getEndLine(), $node->getStartTokenPos(), $node->getEndTokenPos()];
-		$add_non_expr_tokens = true;
+		$tokens = [
+			$node->getType(), $node->getLine(),
+			$node->getStartFilePos(), $node->getEndFilePos(),
+			$node->getStartLine(), $node->getEndLine(),
+			$node->getStartTokenPos(), $node->getEndTokenPos()
+		];
 		if($node instanceof Expr){
 			try{
 				static $printer = null;
 				$printer ??= new Standard();
 				$tokens[] = $printer->prettyPrintExpr($node);
-				$add_non_expr_tokens = false;
 			}catch(Error | Exception){
 			}
-		}
-		if($add_non_expr_tokens){
-			array_push($tokens, $node->getType(), $node->getStartLine(), $node->getEndLine(), $node->getStartTokenPos());
 		}
 		return implode(":", $tokens);
 	}
