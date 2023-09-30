@@ -323,8 +323,9 @@ final class PreProcessor{
 		$non_public_properties = [];
 		$method_to_property_mapping = [];
 		foreach($this->parsed_files as $path => $file){
-			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for final class getters to optimize");
-			$file->visitClassMethods(static function(ClassMethod $node, Scope $scope, string $class, string $method) use(&$method_to_property_mapping, &$non_public_properties, $path){
+			++$done;
+			$file->visitClassMethods(function(ClassMethod $node, Scope $scope, string $class, string $method) use(&$method_to_property_mapping, &$non_public_properties, $done, $total, $path){
+				Logger::info("[" . $done . " / {$total}] [{$class}::{$method}] preprocessor >> Searching for final class getters to optimize");
 				$class_reflection = $scope->getClassReflection();
 				if(
 					$class_reflection === null || // scope is not in a class
@@ -351,7 +352,6 @@ final class PreProcessor{
 				}
 
 				$method_to_property_mapping["{$class}::{$method}"] = [$class, $method, $stmt->expr->name->name];
-
 				$property = $class_reflection->getProperty($stmt->expr->name->name, $scope);
 				if(!$property->isPublic()){
 					$non_public_properties["{$class}::{$stmt->expr->name->name}"] = [$path, $class, $stmt->expr->name->name];
