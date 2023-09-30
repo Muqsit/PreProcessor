@@ -122,7 +122,7 @@ final class ParsedFile{
 				if($node instanceof MethodCall){
 					if($node->name instanceof Identifier && $node->name->toLowerString() === $method){
 						$type = $scope->getType($node->var);
-						if($class_type->accepts($type, true)){
+						if($class_type->accepts($type, true)->yes()){
 							foreach($visitors as $visitor){
 								$return = $visitor($node, $scope);
 								if($return !== null){
@@ -135,7 +135,7 @@ final class ParsedFile{
 					if(
 						$node->name instanceof Identifier &&
 						$node->name->toLowerString() === $method &&
-						$class_type->accepts(new ObjectType($node->name->toString()), true)
+						$class_type->accepts(new ObjectType($node->name->toString()), true)->yes()
 					){
 						foreach($visitors as $visitor){
 							$return = $visitor($node, $scope);
