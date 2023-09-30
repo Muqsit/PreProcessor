@@ -32,7 +32,6 @@ use PHPStan\Rules\Registry as RuleRegistry;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
-use RuntimeException;
 use SplFileInfo;
 use function array_key_exists;
 use function assert;
@@ -103,7 +102,8 @@ final class PreProcessor{
 				$index = ParsedFile::nodeHash($node);
 				if($index !== null){
 					if(array_key_exists($path, $scope_holders) && array_key_exists($index, $scope_holders[$path])){
-						throw new RuntimeException("Found node hash collision when reading {$path}");
+						Logger::warning("Found node hash collision ({$index}) when reading {$path} (code section will be ignored)");
+						$scope = null;
 					}
 					$scope_holders[$path][$index] = $scope;
 				}
