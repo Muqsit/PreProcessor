@@ -20,26 +20,13 @@ use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\Scope;
-use PHPStan\Node\ClassConstantsNode;
-use PHPStan\Node\MethodReturnStatementsNode;
 use PHPStan\Type\ObjectType;
 use SplFileInfo;
-use function array_push;
-use function implode;
-use function str_contains;
-use function var_dump;
 
 final class ParsedFile{
 
 	public static function nodeHash(Node $node) : ?string{
-		$node_type = match($node::class){ // TODO: remove this once https://github.com/phpstan/phpstan-src/pull/1568 is merged
-			ClassConstantsNode::class => "PHPStan_Node_ClassConstantsNode",
-			MethodReturnStatementsNode::class => "PHPStan_Node_MethodReturnStatementsNode",
-			default => $node->getType()
-		};
-
-		$tokens = [$node->getLine()];
-
+		$tokens = [$node->getLine(), $node->getStartLine(), $node->getEndLine(), $node->getStartTokenPos(), $node->getEndTokenPos()];
 		$add_non_expr_tokens = true;
 		if($node instanceof Expr){
 			try{
@@ -51,42 +38,26 @@ final class ParsedFile{
 			}
 		}
 		if($add_non_expr_tokens){
-			array_push($tokens, $node_type, $node->getStartLine(), $node->getEndLine(), $node->getStartTokenPos());
-		}
-		if(str_contains(implode(":", $tokens), '$this->getPlayer()->getUniqueId()->toString()')){
-			var_dump(implode(":", $tokens));
-			echo (new \Exception)->getTraceAsString(), PHP_EOL;
+			array_push($tokens, $node->getType(), $node->getStartLine(), $node->getEndLine(), $node->getStartTokenPos());
 		}
 		return implode(":", $tokens);
 	}
 
-	/** @var SplFileInfo */
-	private $file;
-
-	/** @var Scope[] */
-	private $scopes;
-
 	/** @var Node[] */
-	private $nodes_original;
-
-	/** @var Node[] */
-	private $nodes_modified;
-
-	/** @var mixed[] */
-	private $tokens_original;
+	private array $nodes_modified;
 
 	/**
 	 * @param SplFileInfo $file
-	 * @param array $scopes
-	 * @param array $nodes_original
-	 * @param array $tokens_original
+	 * @param Scope[] $scopes
+	 * @param Node[] $nodes_original
+	 * @param Node[] $tokens_original
 	 */
-	public function __construct(SplFileInfo $file, array $scopes, array $nodes_original, array $tokens_original){
-		$this->file = $file;
-		$this->scopes = $scopes;
-		$this->nodes_original = $nodes_original;
-		$this->tokens_original = $tokens_original;
-
+	public function __construct(
+		readonly public SplFileInfo $file,
+		readonly private array $scopes,
+		readonly private array $nodes_original,
+		readonly private array $tokens_original
+	){
 		$traverser = new NodeTraverser();
 		$traverser->addVisitor(new CloningVisitor());
 		$traverser->addVisitor(new NameResolver(null, [
@@ -96,14 +67,8 @@ final class ParsedFile{
 		$this->nodes_modified = $traverser->traverse($this->nodes_original);
 	}
 
-	public function getFile() : SplFileInfo{
-		return $this->file;
-	}
-
 	/**
-	 * @param Closure[] $visitors
-	 *
-	 * @phpstan-param Closure(Node) : null|int|Node ...$visitors
+	 * @param Closure(Node) : (null|int|Node) ...$visitors
 	 */
 	public function visit(Closure ...$visitors) : void{
 		$traverser = new NodeTraverser();
@@ -116,14 +81,11 @@ final class ParsedFile{
 			}
 			return null;
 		}));
-
 		$this->nodes_modified = $traverser->traverse($this->nodes_modified);
 	}
 
 	/**
-	 * @param Closure[] $visitors
-	 *
-	 * @phpstan-param Closure(Node, Scope, string) : null|int|Node ...$visitors
+	 * @param Closure(Node, Scope, string) : (null|int|Node) ...$visitors
 	 */
 	public function visitWithScope(Closure ...$visitors) : void{
 		$this->visit(function(Node $node) use($visitors){
@@ -141,7 +103,7 @@ final class ParsedFile{
 	}
 
 	/**
-	 * @param string $class
+	 * @param class-string $class
 	 * @param string $method
 	 * @param Closure ...$visitors
 	 *
@@ -190,10 +152,7 @@ final class ParsedFile{
 	}
 
 	/**
-	 * @param Closure[] $visitors
-	 *
-	 * @phpstan-param class-string $class
-	 * @phpstan-param Closure(ClassMethod $node, Scope $scope, string $class, string $method) : null|int|Node ...$visitors
+	 * @param Closure(ClassMethod $node, Scope $scope, string $class, string $method) : (null|int|Node) ...$visitors
 	 */
 	public function visitClassMethods(Closure ...$visitors) : void{
 		$this->visitWithScope(static function(Node $node, Scope $scope, string $index) use($visitors){
@@ -215,12 +174,9 @@ final class ParsedFile{
 	}
 
 	/**
-	 * @param string $class
+	 * @param class-string $class
 	 * @param string $method
 	 * @return ClassMethod
-	 *
-	 * @phpstan-param class-string $class
-	 * @phpstan-param Closure(ClassMethod) : null|int|Node ...$visitors
 	 */
 	public function getMethodNode(string $class, string $method) : ClassMethod{
 		if(!method_exists($class, $method)){

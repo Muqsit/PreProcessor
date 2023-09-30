@@ -6,7 +6,7 @@ namespace muqsit\preprocessor;
 
 use Exception;
 use InvalidArgumentException;
-use PhpParser\Lexer\Emulative;
+use PhpParser\Lexer;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\ConstFetch;
@@ -15,13 +15,20 @@ use PhpParser\Node\NullableType;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\Parser\Php7;
 use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\FileAnalyser;
 use PHPStan\Analyser\NodeScopeResolver;
+use PHPStan\Analyser\RuleErrorTransformer;
 use PHPStan\Analyser\Scope;
+use PHPStan\Analyser\ScopeFactory;
+use PHPStan\Collectors\Registry as CollectorRegistry;
+use PHPStan\Dependency\DependencyResolver;
+use PHPStan\DependencyInjection\Container;
 use PHPStan\DependencyInjection\ContainerFactory;
-use PHPStan\Rules\Registry;
+use PHPStan\Parser\RichParser;
+use PHPStan\Rules\Registry as RuleRegistry;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -31,12 +38,13 @@ use function array_key_exists;
 use function assert;
 use function count;
 use function current;
-use function var_dump;
+use function file_get_contents;
+use const PHP_EOL;
 
 final class PreProcessor{
 
 	/**
-	 * @param string[] $paths
+	 * @param list<string> $paths
 	 * @return self
 	 */
 	public static function fromPaths(array $paths) : self{
@@ -73,39 +81,25 @@ final class PreProcessor{
 		return new self($files);
 	}
 
-	/** @var ParsedFile[] */
-	private $parsed_files = [];
+	/** @var array<string, ParsedFile> */
+	private array $parsed_files = [];
 
 	/**
-	 * @param SplFileInfo[] $files
+	 * @param list<SplFileInfo> $files
 	 */
 	public function __construct(array $files){
-		$containerFactory = new ContainerFactory('/tmp');
-		$container = $containerFactory->create('/tmp', [], []);
-		foreach($container->getParameter("bootstrapFiles") as $bootstrapFile){
-			(static function (string $file) use ($container): void {
-				require_once $file;
-			})($bootstrapFile);
-		}
+		$container = $this->createContainer();
+		$lexer = $this->createLexer();
+		$parser = new Php7($lexer);
+		$analyser = $this->createAnalyzer($container, $lexer, $parser);
 
 		$done = 0;
 		$total = count($files);
 		$scope_holders = [];
-
-		/** @var FileAnalyser $file_analyser */
-		$file_analyser = $container->getByType(FileAnalyser::class);
-		$registry = new Registry([]);
-		$collector_registry = new \PHPStan\Collectors\Registry([]);
 		foreach($files as $file){
 			$path = $file->getRealPath();
-			$file_analyser->analyseFile($path, [], $registry, $collector_registry, function(Node $node, Scope $scope) use($path, &$scope_holders, $container){
-				/** @var NodeScopeResolver $resolver */
-				$resolver = $container->getByType(NodeScopeResolver::class);
-				$resolver->processNodes([$node], $scope, function(Node $node, Scope $scope) : void{
-					// var_dump((new Standard)->prettyPrint([$node]));
-					var_dump($node::class);
-				});
-
+			Logger::info("[" . ++$done . " / {$total}] phpstan >> Reading {$path}");
+			$analyser->analyseFile($path, [], $container->getByType(RuleRegistry::class), $container->getByType(CollectorRegistry::class), function(Node $node, Scope $scope) use($path, &$scope_holders) : void{
 				$index = ParsedFile::nodeHash($node);
 				if($index !== null){
 					if(array_key_exists($path, $scope_holders) && array_key_exists($index, $scope_holders[$path])){
@@ -114,17 +108,7 @@ final class PreProcessor{
 					$scope_holders[$path][$index] = $scope;
 				}
 			});
-			Logger::info("[" . ++$done . " / {$total}] phpstan >> Reading {$path}");
 		}
-
-		$lexer = new Emulative([
-			'usedAttributes' => [
-				'comments',
-				'startLine', 'endLine',
-				'startTokenPos', 'endTokenPos'
-			],
-		]);
-		$parser = new Php7($lexer);
 
 		$done = 0;
 		foreach($files as $file){
@@ -134,6 +118,32 @@ final class PreProcessor{
 			$tokens_original = $lexer->getTokens();
 			$this->parsed_files[$path] = new ParsedFile($file, $scope_holders[$path] ?? [], $nodes_original, $tokens_original);
 		}
+	}
+
+	private function createContainer() : Container{
+		$containerFactory = new ContainerFactory('/tmp');
+		$container = $containerFactory->create('/tmp', [], []);
+		foreach($container->getParameter("bootstrapFiles") as $bootstrapFile){
+			(static function (string $file) : void {
+				require_once $file;
+			})($bootstrapFile);
+		}
+		return $container;
+	}
+
+	private function createLexer() : Lexer{
+		return new Lexer(['usedAttributes' => ['comments', 'startLine', 'endLine', 'startTokenPos', 'endTokenPos']]);
+	}
+
+	private function createAnalyzer(Container $container, Lexer $lexer, Php7 $parser) : FileAnalyser{
+		return new FileAnalyser(
+			$container->getByType(ScopeFactory::class),
+			$container->getByType(NodeScopeResolver::class),
+			new RichParser($parser, $lexer, new NameResolver(), $container),
+			$container->getByType(DependencyResolver::class),
+			$container->getByType(RuleErrorTransformer::class),
+			false
+		);
 	}
 
 	private function printLinePos(Node $node, Scope $scope) : string{
