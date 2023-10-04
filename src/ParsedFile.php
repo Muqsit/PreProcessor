@@ -23,15 +23,16 @@ use PHPStan\Analyser\ScopeContext;
 use PHPStan\Analyser\ScopeFactory;
 use PHPStan\Type\ObjectType;
 use SplFileInfo;
+use function method_exists;
 use function spl_object_id;
 
 final class ParsedFile{
 
-	/** @var Node[] */
-	private array $nodes_modified;
-
 	/** @var array<int, Scope>|null */
 	private ?array $scopes_cached = null;
+
+	/** @var Node[] */
+	private array $nodes_modified;
 
 	/**
 	 * @param ScopeFactory $scope_factory
@@ -81,10 +82,9 @@ final class ParsedFile{
 			if($this->scopes_cached === null){
 				$this->scopes_cached = [];
 				$mutating_scope = $this->scope_factory->create(ScopeContext::create($this->file->getPathname()));
-				$callback = function(Node $node, Scope $scope) : void{
+				$this->scope_resolver->processNodes($this->nodes_modified, $mutating_scope, function(Node $node, Scope $scope) : void{
 					$this->scopes_cached[spl_object_id($node)] = $scope;
-				};
-				$this->scope_resolver->processNodes($this->nodes_modified, $mutating_scope, $callback);
+				});
 			}
 			if(!isset($this->scopes_cached[$id = spl_object_id($node)])){
 				return null;
@@ -110,10 +110,7 @@ final class ParsedFile{
 	 * @phpstan-param Closure(MethodCall|StaticCall, Scope) : null|int|Node ...$visitors
 	 */
 	public function visitMethodCalls(string $class, string $method, Closure ...$visitors) : void{
-		if(!method_exists($class, $method)){
-			throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
-		}
-
+		method_exists($class, $method) || throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
 		$class_type = new ObjectType($class);
 		$method = strtolower($method);
 		$this->visitWithScope(static function(Node $node, Scope $scope) use($class_type, $method, $visitors){

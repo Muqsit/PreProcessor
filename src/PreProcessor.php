@@ -232,6 +232,7 @@ final class PreProcessor{
 						}
 					}
 				}
+				return null;
 			});
 		}
 
