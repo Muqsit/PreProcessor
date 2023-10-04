@@ -4,16 +4,25 @@ declare(strict_types=1);
 
 namespace muqsit\preprocessor;
 
-use Exception;
 use InvalidArgumentException;
 use PhpParser\Lexer;
 use PhpParser\Node;
-use PhpParser\Node\Expr;
+use PhpParser\Node\Expr\ArrayDimFetch;
 use PhpParser\Node\Expr\ConstFetch;
+use PhpParser\Node\Expr\FuncCall;
+use PhpParser\Node\Expr\Isset_;
+use PhpParser\Node\Expr\MethodCall;
+use PhpParser\Node\Expr\PropertyFetch;
+use PhpParser\Node\Expr\StaticCall;
+use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Name;
+use PhpParser\Node\Name\FullyQualified;
 use PhpParser\Node\NullableType;
+use PhpParser\Node\Param;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
+use PhpParser\Node\Stmt\Property;
+use PhpParser\Node\Stmt\Return_;
 use PhpParser\NodeTraverser;
 use PhpParser\Parser\Php7;
 use PhpParser\PrettyPrinter\Standard;
@@ -41,26 +50,16 @@ final class PreProcessor{
 	public static function fromPaths(array $paths) : self{
 		$files = [];
 		foreach($paths as $path){
-			if(!file_exists($path)){
-				throw new InvalidArgumentException("File {$path} does not exist");
-			}
-
+			file_exists($path) || throw new InvalidArgumentException("File {$path} does not exist");
 			$file = new SplFileInfo($path);
-			if($file->getExtension() !== "php"){
-				throw new InvalidArgumentException("{$path} is not a .php file");
-			}
-
+			$file->getExtension() === "php" || throw new InvalidArgumentException("{$path} is not a .php file");
 			$files[] = $file;
 		}
-
 		return new self($files);
 	}
 
 	public static function fromDirectory(string $directory) : self{
-		if(!is_dir($directory)){
-			throw new InvalidArgumentException("Directory {$directory} does not exist");
-		}
-
+		is_dir($directory) || throw new InvalidArgumentException("Directory {$directory} does not exist");
 		$files = [];
 		/** @var SplFileInfo $file */
 		foreach((new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory))) as $file){
@@ -68,7 +67,6 @@ final class PreProcessor{
 				$files[] = $file;
 			}
 		}
-
 		return new self($files);
 	}
 
@@ -113,61 +111,53 @@ final class PreProcessor{
 	}
 
 	/**
-	 * @param string $class
+	 * @param class-string $class
 	 * @param string $method
 	 * @return self
-	 *
-	 * @phpstan-param class-string $class
 	 */
 	public function commentOut(string $class, string $method) : self{
 		$printer = new Standard();
 		$done = 0;
 		$total = count($this->parsed_files);
-
 		foreach($this->parsed_files as $path => $file){
 			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for {$class}::{$method} references in {$path}");
-			$file->visitMethodCalls($class, $method, function(Expr $node, Scope $scope) use($printer){
+			$file->visitMethodCalls($class, $method, function(MethodCall|StaticCall $node, Scope $scope) use($printer){
 				$expression = $printer->prettyPrintExpr($node);
 				Logger::info("[{$this->printLinePos($node, $scope)}] Commented out " . str_replace(PHP_EOL, "", $expression));
 				return new ConstFetch(new Name("/* {$expression} */"));
 			});
 		}
-
 		return $this;
 	}
 
 	public function replaceUQFunctionNamesToFQ() : self{
 		$printer = new Standard();
-
 		foreach($this->parsed_files as $path => $file){
 			$file->visit(function(Node $node) use($printer, $path){
 				if(
-					$node instanceof Expr\FuncCall &&
+					$node instanceof FuncCall &&
 					($namespaced_name = $node->name->getAttribute("namespacedName")) !== null &&
 					!function_exists(implode("\\", $namespaced_name->parts)) &&
 					function_exists("\\" . implode("\\", $node->name->parts))
 				){
 					$new = clone $node;
-					$new->name = new Name\FullyQualified($node->name->parts);
+					$new->name = new FullyQualified($node->name->parts);
 					Logger::info("Replaced function call with unqualified name {$printer->prettyPrintExpr($node)} with fully qualified name {$printer->prettyPrintExpr($new)} in {$path}");
 					return $new;
 				}
 				return null;
 			});
 		}
-
 		return $this;
 	}
 
 	/**
-	 * @param string $class
+	 * @param class-string $class
 	 * @param string $method
 	 * @return self
-	 *
-	 * @phpstan-param class-string $class
 	 */
 	public function inlineMethodCall(string $class, string $method) : self{
-		foreach($this->parsed_files as $path => $file){
+		foreach($this->parsed_files as $file){
 			$method_node = $file->getMethodNode($class, $method);
 			$stmts = $method_node->getStmts();
 			if(count($stmts) === 1){
@@ -175,15 +165,11 @@ final class PreProcessor{
 				foreach($method_node->params as $param){
 					$params[] = $param->var->name;
 				}
-
 				$traverse_stmts = [];
 				foreach($stmts as $stmt){
 					$traverse_stmts[] = $stmt->expr;
 				}
-
-				$file->visitMethodCalls($class, $method, function(Expr $node, Scope $scope) use($traverse_stmts, $params){
-					assert($node instanceof Expr\MethodCall || $node instanceof Expr\StaticCall);
-
+				$file->visitMethodCalls($class, $method, function(MethodCall|StaticCall $node, Scope $scope) use($traverse_stmts, $params){
 					$mapping = [];
 					foreach($node->args as $index => $arg){
 						$mapping[$params[$index]] = $arg->value;
@@ -191,13 +177,12 @@ final class PreProcessor{
 
 					$traverser = new NodeTraverser();
 					$traverser->addVisitor(new ClosureNodeVisitor(function(Node $node) use($mapping) {
-						return $node instanceof Expr\Variable ? clone $mapping[$node->name] : clone $node;
+						return $node instanceof Variable ? clone $mapping[$node->name] : clone $node;
 					}));
 					return $traverser->traverse($traverse_stmts)[0];
 				});
 			}
 		}
-
 		return $this;
 	}
 
@@ -206,27 +191,24 @@ final class PreProcessor{
 	 * nullable values are stored in arrays.
 	 * In $a = ["key" => null] for example, isset($a["key"]) would return false
 	 * while array_key_exists("key", $a) returns true.
-	 *
 	 * @return self
-	 *
-	 * @phpstan-param class-string $class
 	 */
 	public function replaceIssetWithArrayKeyExists() : self{
 		$printer = new Standard();
 		foreach($this->parsed_files as $path => $file){
 			$file->visitWithScope(function(Node $node, Scope $scope) use($path, $printer) {
 				if(
-					$node instanceof Expr\Isset_ &&
+					$node instanceof Isset_ &&
 					count($node->vars) === 1 // TODO: Add support for multiple parameters
 				){
 					$var = $node->vars[0];
 					if(
-						$var instanceof Expr\ArrayDimFetch &&
+						$var instanceof ArrayDimFetch &&
 						$scope->getType($var->var)->isArray()->yes()
 					){
 						$key_type = $scope->getType($var->dim);
 						if(!($key_type->toInteger() instanceof ErrorType) || !($key_type->toString() instanceof ErrorType)){
-							$array_key_exists_fcall = new Expr\FuncCall(new Name\FullyQualified(["array_key_exists"]), [$var->dim, $var->var]);
+							$array_key_exists_fcall = new FuncCall(new FullyQualified(["array_key_exists"]), [$var->dim, $var->var]);
 							Logger::info("Replaced isset -> array_key_exists: {$printer->prettyPrintExpr($node)} -> {$printer->prettyPrintExpr($array_key_exists_fcall)} in {$path}");
 							return $array_key_exists_fcall;
 						}
@@ -235,7 +217,6 @@ final class PreProcessor{
 				return null;
 			});
 		}
-
 		return $this;
 	}
 
@@ -248,12 +229,12 @@ final class PreProcessor{
 	public function removeTypeFromMethodParameters(array $types) : self{
 		$done = 0;
 		$total = count($this->parsed_files);
-		foreach($this->parsed_files as $path => $file){
+		foreach($this->parsed_files as $file){
 			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for types to remove");
 			$file->visitClassMethods(static function(ClassMethod $node, Scope $scope, string $class, string $method) use($types){
 				if($node->isPrivate() || $node->isFinal() || $scope->getClassReflection()->isFinal()){
 					$changed = false;
-					foreach($node->params as $x => $param){
+					foreach($node->params as $param){
 						if($param->type !== null){
 							$type_string = "";
 							if($param->type instanceof NullableType){
@@ -275,14 +256,12 @@ final class PreProcessor{
 				return null;
 			});
 		}
-
 		return $this;
 	}
 
 	public function optimizeFinalGetters() : self{
 		$done = 0;
 		$total = count($this->parsed_files);
-
 		$non_public_properties = [];
 		$method_to_property_mapping = [];
 		foreach($this->parsed_files as $path => $file){
@@ -306,9 +285,9 @@ final class PreProcessor{
 				$stmt = current($node->stmts);
 				assert($stmt !== false);
 				if(
-					!($stmt instanceof Node\Stmt\Return_) ||
-					!($stmt->expr instanceof Expr\PropertyFetch) ||
-					!($stmt->expr->var instanceof Expr\Variable) ||
+					!($stmt instanceof Return_) ||
+					!($stmt->expr instanceof PropertyFetch) ||
+					!($stmt->expr->var instanceof Variable) ||
 					$stmt->expr->var->name !== "this"
 				){
 					return null;
@@ -334,12 +313,12 @@ final class PreProcessor{
 					return null;
 				}
 
-				if($node instanceof Node\Stmt\Property){
+				if($node instanceof Property){
 					// check for non constructor promoted properties
 					if($node->props[0]->name->name !== $property){
 						return null;
 					}
-				}elseif($node instanceof Node\Param){
+				}elseif($node instanceof Param){
 					// check for constructor promoted properties
 					if(
 						($node->flags & Class_::VISIBILITY_MODIFIER_MASK) === 0 || // has no visibility specified
@@ -362,14 +341,13 @@ final class PreProcessor{
 		$done = 0;
 		$total = count($method_to_property_mapping);
 		foreach($method_to_property_mapping as [$class, $method, $property]){
-			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Replacing getter method calls with property-fetch");
+			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Replacing getter method calls to {$class}::{$method} with property-fetch");
 			foreach($this->parsed_files as $path => $file){
-				$file->visitMethodCalls($class, $method, function(Expr $node, Scope $scope) use($property, $printer, $path){
-					if(!($node instanceof Expr\MethodCall)){
+				$file->visitMethodCalls($class, $method, function(MethodCall|StaticCall $node, Scope $scope) use($property, $printer, $path){
+					if(!($node instanceof MethodCall)){
 						return null;
 					}
-
-					$replacement = new Expr\PropertyFetch($node->var, $property);
+					$replacement = new PropertyFetch($node->var, $property);
 					Logger::info("Replaced getter method call {$printer->prettyPrintExpr($node)} with property call {$printer->prettyPrintExpr($replacement)} in {$path}");
 					return $replacement;
 				});
@@ -379,18 +357,14 @@ final class PreProcessor{
 	}
 
 	public function export(string $output_folder, bool $overwrite = false) : void{
-		if(!is_dir($output_folder)){
-			throw new Exception("Directory {$output_folder} does not exist.");
-		}
-
+		is_dir($output_folder) || throw new InvalidArgumentException("Directory {$output_folder} does not exist.");
 		$cwd = getcwd();
 		foreach($this->parsed_files as $path => $file){
-			if(strpos($path, $cwd) === 0){
+			if(str_starts_with($path, $cwd)){
 				$target = $output_folder . substr($path, strlen($cwd));
 			}else{
 				$target = $output_folder . "/" . $path;
 			}
-
 			if($overwrite || !file_exists($target)){
 				$directory = (new SplFileInfo($target))->getPath();
 				if(!is_dir($directory)){

@@ -11,12 +11,12 @@ use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
+use PhpParser\Node\Name;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\PrettyPrinter\Standard;
-use PHPStan\Analyser\MutatingScope;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeContext;
@@ -104,17 +104,13 @@ final class ParsedFile{
 	/**
 	 * @param class-string $class
 	 * @param string $method
-	 * @param Closure ...$visitors
-	 *
-	 * @phpstan-param class-string $class
-	 * @phpstan-param Closure(MethodCall|StaticCall, Scope) : null|int|Node ...$visitors
+	 * @param Closure(MethodCall|StaticCall, Scope) : (null|int|Node) ...$visitors
 	 */
 	public function visitMethodCalls(string $class, string $method, Closure ...$visitors) : void{
 		method_exists($class, $method) || throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
-		$class_type = new ObjectType($class);
 		$method = strtolower($method);
-		$this->visitWithScope(static function(Node $node, Scope $scope) use($class_type, $class, $method, $visitors){
-			if($node instanceof Expr && $scope instanceof MutatingScope){
+		$this->visitWithScope(static function(Node $node, Scope $scope) use($class, $method, $visitors){
+			if($node instanceof Expr){
 				if($node instanceof MethodCall){
 					if($node->name instanceof Identifier && $node->name->toLowerString() === $method){
 						$type = $scope->getType($node->var);
@@ -129,7 +125,7 @@ final class ParsedFile{
 					}
 				}elseif($node instanceof StaticCall){
 					if(
-						$node->class instanceof Node\Name &&
+						$node->class instanceof Name &&
 						$node->name instanceof Identifier &&
 						$node->name->toLowerString() === $method &&
 						$node->class->toString() === $class
@@ -143,7 +139,6 @@ final class ParsedFile{
 					}
 				}
 			}
-
 			return null;
 		});
 	}
@@ -153,19 +148,16 @@ final class ParsedFile{
 	 */
 	public function visitClassMethods(Closure ...$visitors) : void{
 		$this->visitWithScope(static function(Node $node, Scope $scope) use($visitors){
-			if($node instanceof ClassMethod && $scope instanceof MutatingScope){
-				if($node->name instanceof Identifier){
-					$class = $scope->getClassReflection()->getName();
-					$method = $node->name->toString();
-					foreach($visitors as $visitor){
-						$result = $visitor($node, $scope, $class, $method);
-						if($result !== null){
-							return $result;
-						}
+			if($node instanceof ClassMethod && $node->name instanceof Identifier){
+				$class = $scope->getClassReflection()->getName();
+				$method = $node->name->toString();
+				foreach($visitors as $visitor){
+					$result = $visitor($node, $scope, $class, $method);
+					if($result !== null){
+						return $result;
 					}
 				}
 			}
-
 			return null;
 		});
 	}
@@ -176,13 +168,9 @@ final class ParsedFile{
 	 * @return ClassMethod
 	 */
 	public function getMethodNode(string $class, string $method) : ClassMethod{
-		if(!method_exists($class, $method)){
-			throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
-		}
-
+		method_exists($class, $method) || throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
 		/** @var ClassMethod|null $method_node */
 		$method_node = null;
-
 		$method = strtolower($method);
 		$this->visitClassMethods(static function(ClassMethod $node, Scope $scope, string $class_name, string $method_name) use($class, $method, &$method_node){
 			if(strtolower($method_name) === $method && is_a($class_name, $class, true)){
@@ -190,12 +178,10 @@ final class ParsedFile{
 			}
 			return null;
 		});
-
 		return $method_node;
 	}
 
 	public function export() : string{
-		$printer = new Standard();
-		return $printer->printFormatPreserving($this->nodes_modified, $this->nodes_original, $this->tokens_original);
+		return (new Standard())->printFormatPreserving($this->nodes_modified, $this->nodes_original, $this->tokens_original);
 	}
 }
