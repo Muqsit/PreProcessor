@@ -351,7 +351,9 @@ final class PreProcessor{
 					return null;
 				}
 
-				$node->flags = Class_::MODIFIER_PUBLIC;
+				$node->flags &= ~Class_::MODIFIER_PRIVATE;
+				$node->flags &= ~Class_::MODIFIER_PROTECTED;
+				$node->flags |= Class_::MODIFIER_PUBLIC;
 				Logger::info("Updated visibility of property {$class}::\${$property} to public in {$path}");
 				return $node;
 			});
