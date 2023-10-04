@@ -113,12 +113,12 @@ final class ParsedFile{
 		method_exists($class, $method) || throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
 		$class_type = new ObjectType($class);
 		$method = strtolower($method);
-		$this->visitWithScope(static function(Node $node, Scope $scope) use($class_type, $method, $visitors){
+		$this->visitWithScope(static function(Node $node, Scope $scope) use($class_type, $class, $method, $visitors){
 			if($node instanceof Expr && $scope instanceof MutatingScope){
 				if($node instanceof MethodCall){
 					if($node->name instanceof Identifier && $node->name->toLowerString() === $method){
 						$type = $scope->getType($node->var);
-						if($class_type->accepts($type, true)->yes()){
+						if($type instanceof ObjectType && $type->isInstanceOf($class)->yes()){
 							foreach($visitors as $visitor){
 								$return = $visitor($node, $scope);
 								if($return !== null){
@@ -129,9 +129,10 @@ final class ParsedFile{
 					}
 				}elseif($node instanceof StaticCall){
 					if(
+						$node->class instanceof Node\Name &&
 						$node->name instanceof Identifier &&
 						$node->name->toLowerString() === $method &&
-						$class_type->accepts(new ObjectType($node->name->toString()), true)->yes()
+						$node->class->toString() === $class
 					){
 						foreach($visitors as $visitor){
 							$return = $visitor($node, $scope);
