@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace muqsit\preprocessor;
 
+use Generator;
 use InvalidArgumentException;
 use PhpParser\Lexer;
 use PhpParser\Node;
@@ -34,15 +35,19 @@ use PHPStan\DependencyInjection\ContainerFactory;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use RuntimeException;
 use SplFileInfo;
 use Symfony\Component\Filesystem\Path;
-use function array_keys;
 use function assert;
 use function count;
 use function current;
+use function file_exists;
 use function file_get_contents;
+use function file_put_contents;
 use function getcwd;
-use function var_dump;
+use function is_dir;
+use function mkdir;
+use function sprintf;
 use const PHP_EOL;
 
 final class PreProcessor{
@@ -366,27 +371,35 @@ final class PreProcessor{
 		return $this;
 	}
 
-	public function export(string $output_folder, bool $overwrite = false) : void{
+	/**
+	 * @param string $output_folder
+	 * @return Generator<string, string>
+	 */
+	public function exporter(string $output_folder) : Generator{
 		is_dir($output_folder) || throw new InvalidArgumentException("Directory {$output_folder} does not exist.");
 		$cwd = getcwd();
 		$base_path = Path::makeAbsolute($output_folder, $cwd);
 		$printer = new Standard();
 		foreach($this->parsed_files as $path => $file){
-			$target = Path::join($base_path, Path::makeRelative($path, $cwd));
-			if($overwrite || !file_exists($target)){
-				$directory = (new SplFileInfo($target))->getPath();
-				if(!is_dir($directory)){
-					/** @noinspection MkdirRaceConditionInspection */
-					mkdir($directory, 0777, true);
-				}
-				if(file_put_contents($target, $file->export($printer)) !== false){
-					Logger::info("Wrote modified {$path} to {$target}");
-				}else{
-					Logger::info("Failed to write {$path} to {$target}");
-				}
-			}else{
-				Logger::warning("Failed to write {$path} to {$target}, file already exists");
+			yield Path::join($base_path, Path::makeRelative($path, $cwd)) => $file->export($printer);
+		}
+	}
+
+	public function export(string $output_folder, bool $overwrite = false) : void{
+		foreach($this->exporter($output_folder) as $path => $contents){
+			if(!$overwrite && file_exists($path)){
+				Logger::warning("Failed to write {$path}, file already exists");
+				continue;
 			}
+			$directory = Path::getDirectory($path);
+			if(!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)){
+				throw new RuntimeException(sprintf("Directory '%s' was not created", $directory));
+			}
+			if(file_put_contents($path, $contents) === false){
+				Logger::info("Failed to write {$path}");
+				continue;
+			}
+			Logger::info("Wrote modified {$path}");
 		}
 	}
 }
