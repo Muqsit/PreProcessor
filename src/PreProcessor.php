@@ -45,10 +45,11 @@ use function file_exists;
 use function file_get_contents;
 use function file_put_contents;
 use function getcwd;
+use function implode;
+use function in_array;
 use function is_dir;
 use function mkdir;
 use function sprintf;
-use const PHP_EOL;
 
 final class PreProcessor{
 
@@ -64,7 +65,7 @@ final class PreProcessor{
 			$file->getExtension() === "php" || throw new InvalidArgumentException("{$path} is not a .php file");
 			$files[] = $file;
 		}
-		return new self($files);
+		return self::fromFiles($files);
 	}
 
 	public static function fromDirectory(string $directory) : self{
@@ -76,33 +77,29 @@ final class PreProcessor{
 				$files[] = $file;
 			}
 		}
-		return new self($files);
+		return self::fromFiles($files);
 	}
-
-	/** @var array<string, ParsedFile> */
-	private array $parsed_files = [];
 
 	/**
 	 * @param list<SplFileInfo> $files
 	 */
-	public function __construct(array $files){
-		$container = $this->createContainer();
-		$lexer = $this->createLexer();
+	public static function fromFiles(array $files) : self{
+		$container = self::createContainer();
+		$lexer = self::createLexer();
 		$parser = new Php7($lexer);
-		$done = 0;
-		$total = count($files);
 		$scope_factory = $container->getByType(ScopeFactory::class);
 		$scope_resolver = $container->getByType(NodeScopeResolver::class);
+		$parsed_files = [];
 		foreach($files as $file){
 			$path = $file->getRealPath();
-			Logger::info("[" . ++$done . " / {$total}] php-parser >> Reading {$path}");
 			$nodes_original = $parser->parse(file_get_contents($path));
 			$tokens_original = $lexer->getTokens();
-			$this->parsed_files[$path] = new ParsedFile($scope_factory, $scope_resolver, $file, $nodes_original, $tokens_original);
+			$parsed_files[$path] = new ParsedFile($scope_factory, $scope_resolver, $file, $nodes_original, $tokens_original);
 		}
+		return new self($parsed_files);
 	}
 
-	private function createContainer() : Container{
+	private static function createContainer() : Container{
 		$containerFactory = new ContainerFactory('/tmp');
 		$container = $containerFactory->create('/tmp', [], []);
 		foreach($container->getParameter("bootstrapFiles") as $bootstrapFile){
@@ -113,9 +110,18 @@ final class PreProcessor{
 		return $container;
 	}
 
-	private function createLexer() : Lexer{
+	private static function createLexer() : Lexer{
 		return new Lexer(['usedAttributes' => ['comments', 'startLine', 'endLine', 'startTokenPos', 'endTokenPos']]);
 	}
+
+	/**
+	 * @param array<string, ParsedFile> $parsed_files
+	 * @param Logger $logger
+	 */
+	public function __construct(
+		readonly public array $parsed_files,
+		readonly public Logger $logger = new Logger()
+	){}
 
 	private function printLinePos(Node $node, Scope $scope) : string{
 		return $scope->isInClass() ? "{$scope->getClassReflection()->getName()}:{$node->getLine()}" : "{$scope->getFile()}:{$node->getLine()}";
@@ -131,10 +137,16 @@ final class PreProcessor{
 		$done = 0;
 		$total = count($this->parsed_files);
 		foreach($this->parsed_files as $path => $file){
-			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for {$class}::{$method} references in {$path}");
+			$this->logger->info(
+				$this->logger->style("searching ", Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style("{$class}::{$method}", Logger::STYLE_COLOR_LIGHT_CYAN) .
+				$this->logger->style(" to comment out in ", Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style($path, Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style(sprintf(" (%.2f%%)", (++$done / $total) * 100), Logger::STYLE_COLOR_CYAN)
+			);
 			$file->visitMethodCalls($class, $method, function(MethodCall|StaticCall $node, Scope $scope) use($printer){
 				$expression = $printer->prettyPrintExpr($node);
-				Logger::info("[{$this->printLinePos($node, $scope)}] Commented out " . str_replace(PHP_EOL, "", $expression));
+				$this->logger->info(sprintf("    commented out %s at %s", $this->logger->style($expression, Logger::STYLE_COLOR_LIGHT_MAGENTA), $this->printLinePos($node, $scope)));
 				return new ConstFetch(new Name("/* {$expression} */"));
 			});
 		}
@@ -143,8 +155,14 @@ final class PreProcessor{
 
 	public function replaceUQFunctionNamesToFQ() : self{
 		$printer = new Standard();
+		$done = 0;
+		$total = count($this->parsed_files);
 		foreach($this->parsed_files as $path => $file){
-			$file->visit(function(Node $node) use($printer, $path){
+			$this->logger->info(
+				$this->logger->style(sprintf("searching non-fqn fcalls in %s", $path), Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style(sprintf(" (%.2f%%)", (++$done / $total) * 100), Logger::STYLE_COLOR_CYAN)
+			);
+			$file->visit(function(Node $node) use($printer) : ?FuncCall{
 				if(
 					$node instanceof FuncCall &&
 					($namespaced_name = $node->name->getAttribute("namespacedName")) !== null &&
@@ -153,7 +171,7 @@ final class PreProcessor{
 				){
 					$new = clone $node;
 					$new->name = new FullyQualified($node->name->parts);
-					Logger::info("Replaced function call with unqualified name {$printer->prettyPrintExpr($node)} with fully qualified name {$printer->prettyPrintExpr($new)} in {$path}");
+					$this->logger->info(sprintf("    non-fqn fcall treated as %s", $this->logger->style($printer->prettyPrintExpr($new), Logger::STYLE_COLOR_LIGHT_MAGENTA)));
 					return $new;
 				}
 				return null;
@@ -220,7 +238,7 @@ final class PreProcessor{
 						$key_type = $scope->getType($var->dim);
 						if(!($key_type->toInteger() instanceof ErrorType) || !($key_type->toString() instanceof ErrorType)){
 							$array_key_exists_fcall = new FuncCall(new FullyQualified(["array_key_exists"]), [$var->dim, $var->var]);
-							Logger::info("Replaced isset -> array_key_exists: {$printer->prettyPrintExpr($node)} -> {$printer->prettyPrintExpr($array_key_exists_fcall)} in {$path}");
+							$this->logger->info("Replaced isset -> array_key_exists: {$printer->prettyPrintExpr($node)} -> {$printer->prettyPrintExpr($array_key_exists_fcall)} in {$path}");
 							return $array_key_exists_fcall;
 						}
 					}
@@ -240,9 +258,15 @@ final class PreProcessor{
 	public function removeTypeFromMethodParameters(array $types) : self{
 		$done = 0;
 		$total = count($this->parsed_files);
-		foreach($this->parsed_files as $file){
-			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Searching for types to remove");
-			$file->visitClassMethods(static function(ClassMethod $node, Scope $scope, string $class, string $method) use($types){
+		foreach($this->parsed_files as $path => $file){
+			$this->logger->info(
+				$this->logger->style("searching ", Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style(implode(", ", $types), Logger::STYLE_COLOR_LIGHT_CYAN) .
+				$this->logger->style(" types to remove in ", Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style($path, Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style(sprintf(" (%.2f%%)", (++$done / $total) * 100), Logger::STYLE_COLOR_CYAN)
+			);
+			$file->visitClassMethods(function(ClassMethod $node, Scope $scope, string $class, string $method) use($types){
 				if($node->isPrivate() || $node->isFinal() || $scope->getClassReflection()->isFinal()){
 					$changed = false;
 					foreach($node->params as $param){
@@ -256,7 +280,14 @@ final class PreProcessor{
 							}
 							$type_string .= $type->toString();
 							if(in_array(($param->type instanceof NullableType ? $param->type->type : $param->type)->toString(), $types, true)){
-								Logger::info("Removed type {$type_string} from parameter \"{$param->var->name}\" of method {$class}::{$method}");
+								$this->logger->info(
+									"    removed type " .
+									$this->logger->style($type_string, Logger::STYLE_COLOR_LIGHT_MAGENTA) .
+									" from parameter " .
+									$this->logger->style($param->var->name, Logger::STYLE_COLOR_LIGHT_MAGENTA) .
+									" of method " .
+									$this->logger->style("{$class}::{$method}", Logger::STYLE_COLOR_LIGHT_MAGENTA)
+								);
 								$param->type = null;
 								$changed = true;
 							}
@@ -276,9 +307,12 @@ final class PreProcessor{
 		$non_public_properties = [];
 		$method_to_property_mapping = [];
 		foreach($this->parsed_files as $path => $file){
-			++$done;
-			$file->visitClassMethods(function(ClassMethod $node, Scope $scope, string $class, string $method) use(&$method_to_property_mapping, &$non_public_properties, $done, $total, $path){
-				Logger::info("[" . $done . " / {$total}] [{$class}::{$method}] preprocessor >> Searching for final class getters to optimize");
+			$this->logger->info(
+				$this->logger->style("searching final class getters to optimize in {$path}", Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style(sprintf(" (%.2f%%)", (++$done / $total) * 100), Logger::STYLE_COLOR_CYAN)
+			);
+			$file->visitClassMethods(function(ClassMethod $node, Scope $scope, string $class, string $method) use(&$method_to_property_mapping, &$non_public_properties, $path){
+				$this->logger->info("    analyzing " . $this->logger->style("{$class}::{$method}", Logger::STYLE_COLOR_LIGHT_MAGENTA));
 				$class_reflection = $scope->getClassReflection();
 				if(
 					$class_reflection === null || // scope is not in a class
@@ -321,8 +355,8 @@ final class PreProcessor{
 		$done = 0;
 		$total = count($non_public_properties);
 		foreach($non_public_properties as [$path, $class, $property]){
-			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Updating visibility of final class getters");
-			$this->parsed_files[$path]->visitWithScope(static function(Node $node, Scope $scope) use($class, $property, $path) {
+			++$done;
+			$this->parsed_files[$path]->visitWithScope(function(Node $node, Scope $scope) use($class, $property, $done, $total) {
 				$class_reflection = $scope->getClassReflection();
 				if($class_reflection === null || $class_reflection->getName() !== $class){
 					return null;
@@ -331,6 +365,9 @@ final class PreProcessor{
 				if($node instanceof Property){
 					// check for non constructor promoted properties
 					if($node->props[0]->name->name !== $property){
+						return null;
+					}
+					if(($node->flags & Class_::MODIFIER_PUBLIC) !== 0){ // has public visibility
 						return null;
 					}
 				}elseif($node instanceof Param){
@@ -348,7 +385,11 @@ final class PreProcessor{
 				$node->flags &= ~Class_::MODIFIER_PRIVATE;
 				$node->flags &= ~Class_::MODIFIER_PROTECTED;
 				$node->flags |= Class_::MODIFIER_PUBLIC;
-				Logger::info("Updated visibility of property {$class}::\${$property} to public in {$path}");
+				$this->logger->info(
+					"    updated visibility of property " .
+					$this->logger->style("{$class}::\${$property}", Logger::STYLE_COLOR_LIGHT_MAGENTA) .
+					$this->logger->style(sprintf(" (%.2f%%)", ($done / $total) * 100), Logger::STYLE_COLOR_MAGENTA)
+				);
 				return $node;
 			});
 		}
@@ -356,14 +397,24 @@ final class PreProcessor{
 		$done = 0;
 		$total = count($method_to_property_mapping);
 		foreach($method_to_property_mapping as [$class, $method, $property]){
-			Logger::info("[" . ++$done . " / {$total}] preprocessor >> Replacing getter method calls to {$class}::{$method} with property-fetch");
+			$this->logger->info(
+				$this->logger->style("searching ", Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style("{$class}::{$method}", Logger::STYLE_COLOR_LIGHT_CYAN) .
+				$this->logger->style(" method calls to inline in {$path}", Logger::STYLE_COLOR_WHITE) .
+				$this->logger->style(sprintf(" (%.2f%%)", (++$done / $total) * 100), Logger::STYLE_COLOR_CYAN)
+			);
 			foreach($this->parsed_files as $path => $file){
-				$file->visitMethodCalls($class, $method, function(MethodCall|StaticCall $node, Scope $scope) use($property, $printer, $path){
+				$file->visitMethodCalls($class, $method, function(MethodCall|StaticCall $node, Scope $scope) use($property, $printer){
 					if(!($node instanceof MethodCall)){
 						return null;
 					}
 					$replacement = new PropertyFetch($node->var, $property);
-					Logger::info("Replaced getter method call {$printer->prettyPrintExpr($node)} with property call {$printer->prettyPrintExpr($replacement)} in {$path}");
+					$this->logger->info(
+						"    inlined method call " .
+						$this->logger->style($printer->prettyPrintExpr($node), Logger::STYLE_COLOR_LIGHT_MAGENTA) .
+						" with " .
+						$this->logger->style($printer->prettyPrintExpr($replacement), Logger::STYLE_COLOR_LIGHT_MAGENTA)
+					);
 					return $replacement;
 				});
 			}
@@ -388,7 +439,7 @@ final class PreProcessor{
 	public function export(string $output_folder, bool $overwrite = false) : void{
 		foreach($this->exporter($output_folder) as $path => $contents){
 			if(!$overwrite && file_exists($path)){
-				Logger::warning("Failed to write {$path}, file already exists");
+				$this->logger->warn("failed to write {$path}, file already exists");
 				continue;
 			}
 			$directory = Path::getDirectory($path);
@@ -396,10 +447,10 @@ final class PreProcessor{
 				throw new RuntimeException(sprintf("Directory '%s' was not created", $directory));
 			}
 			if(file_put_contents($path, $contents) === false){
-				Logger::info("Failed to write {$path}");
+				$this->logger->info("failed to write {$path}");
 				continue;
 			}
-			Logger::info("Wrote modified {$path}");
+			$this->logger->info("wrote modified {$path}");
 		}
 	}
 }
