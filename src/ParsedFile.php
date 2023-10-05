@@ -16,7 +16,7 @@ use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\NodeVisitor\NameResolver;
-use PhpParser\PrettyPrinter\Standard;
+use PhpParser\PrettyPrinterAbstract;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeContext;
@@ -181,7 +181,7 @@ final class ParsedFile{
 		return $method_node;
 	}
 
-	public function export() : string{
-		return (new Standard())->printFormatPreserving($this->nodes_modified, $this->nodes_original, $this->tokens_original);
+	public function export(PrettyPrinterAbstract $printer) : string{
+		return $printer->printFormatPreserving($this->nodes_modified, $this->nodes_original, $this->tokens_original);
 	}
 }

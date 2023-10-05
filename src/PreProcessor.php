@@ -365,6 +365,7 @@ final class PreProcessor{
 	public function export(string $output_folder, bool $overwrite = false) : void{
 		is_dir($output_folder) || throw new InvalidArgumentException("Directory {$output_folder} does not exist.");
 		$cwd = getcwd();
+		$printer = new Standard();
 		foreach($this->parsed_files as $path => $file){
 			if(str_starts_with($path, $cwd)){
 				$target = $output_folder . substr($path, strlen($cwd));
@@ -377,7 +378,7 @@ final class PreProcessor{
 					/** @noinspection MkdirRaceConditionInspection */
 					mkdir($directory, 0777, true);
 				}
-				if(file_put_contents($target, $file->export()) !== false){
+				if(file_put_contents($target, $file->export($printer)) !== false){
 					Logger::info("Wrote modified {$path} to {$target}");
 				}else{
 					Logger::info("Failed to write {$path} to {$target}");
