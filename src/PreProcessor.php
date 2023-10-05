@@ -35,10 +35,14 @@ use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
+use Symfony\Component\Filesystem\Path;
+use function array_keys;
 use function assert;
 use function count;
 use function current;
 use function file_get_contents;
+use function getcwd;
+use function var_dump;
 use const PHP_EOL;
 
 final class PreProcessor{
@@ -365,13 +369,10 @@ final class PreProcessor{
 	public function export(string $output_folder, bool $overwrite = false) : void{
 		is_dir($output_folder) || throw new InvalidArgumentException("Directory {$output_folder} does not exist.");
 		$cwd = getcwd();
+		$base_path = Path::makeAbsolute($output_folder, $cwd);
 		$printer = new Standard();
 		foreach($this->parsed_files as $path => $file){
-			if(str_starts_with($path, $cwd)){
-				$target = $output_folder . substr($path, strlen($cwd));
-			}else{
-				$target = $output_folder . "/" . $path;
-			}
+			$target = Path::join($base_path, Path::makeRelative($path, $cwd));
 			if($overwrite || !file_exists($target)){
 				$directory = (new SplFileInfo($target))->getPath();
 				if(!is_dir($directory)){
