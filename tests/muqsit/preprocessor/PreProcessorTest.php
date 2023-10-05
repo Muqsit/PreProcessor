@@ -39,9 +39,11 @@ final class PreProcessorTest extends TestCase{
 		$processor = $this->buildPreProcessorForSample("logger-debug-method-call.php");
 		$processor->commentOut(\Logger::class, "debug");
 		$this->assertDiff($processor, [
-			[10, "\t\t/* \$this->getLogger()->debug(\"Plugin enabled timestamp: \" . \\time()) */;"],
-			[13, "\t\t/* \$logger->debug(\"Logging from {\$this->getName()}\") */;"],
-			[16, "\t\t/* \$child->debug(\"Hello world\") */;"]
+			[15, "\t\t/* \$this->getLogger()->debug(\"Plugin enabled timestamp: \" . \\time()) */;"],
+			[18, "\t\t/* \$logger->debug(\"Logging from {\$this->getName()}\") */;"],
+			[23, "\t\t/* \$child->debug(\"Hello world\") */;"],
+			[25, "\t\t/* \$this->l1->debug(\"test phpdoc typed property\") */;"],
+			[26, "\t\t/* \$this->l2->debug(\"test native typed property\") */;"]
 		]);
 	}
 }
