@@ -272,8 +272,7 @@ final class PreProcessor{
 				if(
 					$class_reflection === null || // scope is not in a class
 					$node->isPrivate() ||
-					(!$class_reflection->isFinal() && !$node->isFinal()) ||
-					$class_reflection->getParentClass() !== null
+					(!$class_reflection->isFinal() && !$node->isFinal())
 				){
 					return null;
 				}
@@ -293,8 +292,13 @@ final class PreProcessor{
 					return null;
 				}
 
-				$method_to_property_mapping["{$class}::{$method}"] = [$class, $method, $stmt->expr->name->name];
 				$property = $class_reflection->getProperty($stmt->expr->name->name, $scope);
+				if(!$property->getDeclaringClass()->is($class)){
+					// if class has a parent class, the property may not be defined in this class
+					return null;
+				}
+
+				$method_to_property_mapping["{$class}::{$method}"] = [$class, $method, $stmt->expr->name->name];
 				if(!$property->isPublic()){
 					$non_public_properties["{$class}::{$stmt->expr->name->name}"] = [$path, $class, $stmt->expr->name->name];
 				}
