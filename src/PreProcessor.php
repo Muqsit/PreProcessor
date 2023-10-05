@@ -82,12 +82,14 @@ final class PreProcessor{
 		$parser = new Php7($lexer);
 		$done = 0;
 		$total = count($files);
+		$scope_factory = $container->getByType(ScopeFactory::class);
+		$scope_resolver = $container->getByType(NodeScopeResolver::class);
 		foreach($files as $file){
 			$path = $file->getRealPath();
 			Logger::info("[" . ++$done . " / {$total}] php-parser >> Reading {$path}");
 			$nodes_original = $parser->parse(file_get_contents($path));
 			$tokens_original = $lexer->getTokens();
-			$this->parsed_files[$path] = new ParsedFile($container->getByType(ScopeFactory::class), $container->getByType(NodeScopeResolver::class), $file, $nodes_original, $tokens_original);
+			$this->parsed_files[$path] = new ParsedFile($scope_factory, $scope_resolver, $file, $nodes_original, $tokens_original);
 		}
 	}
 
