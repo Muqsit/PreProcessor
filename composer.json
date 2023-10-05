@@ -14,5 +14,14 @@
         "psr-4": {
             "muqsit\\preprocessor\\": "src/"
         }
+    },
+    "autoload-dev": {
+        "psr-0": {
+            "muqsit\\preprocessor\\": "tests/"
+        }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.3",
+        "pocketmine/pocketmine-mp": "5.6.0"
     }
 }
