@@ -11,24 +11,36 @@ permissions:
 
 jobs:
   phpunit:
-    runs-on: ubuntu-latest
+    name: PHPUnit tests
+    runs-on: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu-20.04]
+        php: ["8.1", "8.2"]
+
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-    - name: Validate composer.json and composer.lock
-      run: composer validate --strict
+      - name: Setup PHP
+        uses: pmmp/setup-php-action@2.0.0
+        with:
+          php-version: ${{ matrix.php }}
+          install-path: "./bin"
+          pm-version-major: "5"
 
-    - name: Cache Composer packages
-      id: composer-cache
-      uses: actions/cache@v3
-      with:
-        path: vendor
-        key: ${{ runner.os }}-php-${{ hashFiles('**/composer.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-php-
+      - name: Restore Composer package cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/composer/files
+            ~/.cache/composer/vcs
+          key: "composer-v2-cache-${{ matrix.php }}-${{ hashFiles('./composer.lock') }}"
+          restore-keys: |
+            composer-v2-cache-
 
-    - name: Install dependencies
-      run: composer install --prefer-dist --no-progress
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction
 
-    - name: Run test suite
-      run: ./vendor/bin/phpunit tests --testdox
+      - name: Run PHPUnit tests
+        run: ./vendor/bin/phpunit --fail-on-warning tests --testdox
