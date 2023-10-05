@@ -21,8 +21,10 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeContext;
 use PHPStan\Analyser\ScopeFactory;
+use PHPStan\Reflection\ClassReflection;
 use PHPStan\Type\ObjectType;
 use SplFileInfo;
+use function assert;
 use function method_exists;
 use function spl_object_id;
 
@@ -144,15 +146,16 @@ final class ParsedFile{
 	}
 
 	/**
-	 * @param Closure(ClassMethod $node, Scope $scope, string $class, string $method) : (null|int|Node) ...$visitors
+	 * @param Closure(ClassMethod $node, Scope $scope, ClassReflection $class, string $method) : (null|int|Node) ...$visitors
 	 */
 	public function visitClassMethods(Closure ...$visitors) : void{
 		$this->visitWithScope(static function(Node $node, Scope $scope) use($visitors){
 			if($node instanceof ClassMethod && $node->name instanceof Identifier){
-				$class = $scope->getClassReflection()->getName();
+				$class_reflection = $scope->getClassReflection();
+				assert($class_reflection !== null);
 				$method = $node->name->toString();
 				foreach($visitors as $visitor){
-					$result = $visitor($node, $scope, $class, $method);
+					$result = $visitor($node, $scope, $class_reflection, $method);
 					if($result !== null){
 						return $result;
 					}
@@ -172,8 +175,8 @@ final class ParsedFile{
 		/** @var ClassMethod|null $method_node */
 		$method_node = null;
 		$method = strtolower($method);
-		$this->visitClassMethods(static function(ClassMethod $node, Scope $scope, string $class_name, string $method_name) use($class, $method, &$method_node){
-			if(strtolower($method_name) === $method && is_a($class_name, $class, true)){
+		$this->visitClassMethods(static function(ClassMethod $node, Scope $scope, ClassReflection $class_reflection, string $method_name) use($class, $method, &$method_node){
+			if(strtolower($method_name) === $method && is_a($class_reflection->getName(), $class, true)){
 				$method_node = $node;
 			}
 			return null;

@@ -32,6 +32,7 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeFactory;
 use PHPStan\DependencyInjection\Container;
 use PHPStan\DependencyInjection\ContainerFactory;
+use PHPStan\Reflection\ClassReflection;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -266,7 +267,7 @@ final class PreProcessor{
 				$this->logger->style($path, Logger::STYLE_COLOR_WHITE) .
 				$this->logger->style(sprintf(" (%.2f%%)", (++$done / $total) * 100), Logger::STYLE_COLOR_CYAN)
 			);
-			$file->visitClassMethods(function(ClassMethod $node, Scope $scope, string $class, string $method) use($types){
+			$file->visitClassMethods(function(ClassMethod $node, Scope $scope, ClassReflection $class, string $method) use($types){
 				if($node->isPrivate() || $node->isFinal() || $scope->getClassReflection()->isFinal()){
 					$changed = false;
 					foreach($node->params as $param){
@@ -286,7 +287,7 @@ final class PreProcessor{
 									" from parameter " .
 									$this->logger->style($param->var->name, Logger::STYLE_COLOR_LIGHT_MAGENTA) .
 									" of method " .
-									$this->logger->style("{$class}::{$method}", Logger::STYLE_COLOR_LIGHT_MAGENTA)
+									$this->logger->style("{$class->getName()}::{$method}", Logger::STYLE_COLOR_LIGHT_MAGENTA)
 								);
 								$param->type = null;
 								$changed = true;
@@ -311,11 +312,10 @@ final class PreProcessor{
 				$this->logger->style("searching final class getters to optimize in {$path}", Logger::STYLE_COLOR_WHITE) .
 				$this->logger->style(sprintf(" (%.2f%%)", (++$done / $total) * 100), Logger::STYLE_COLOR_CYAN)
 			);
-			$file->visitClassMethods(function(ClassMethod $node, Scope $scope, string $class, string $method) use(&$method_to_property_mapping, &$non_public_properties, $path){
-				$this->logger->info("    analyzing " . $this->logger->style("{$class}::{$method}", Logger::STYLE_COLOR_LIGHT_MAGENTA));
-				$class_reflection = $scope->getClassReflection();
+			$file->visitClassMethods(function(ClassMethod $node, Scope $scope, ClassReflection $class_reflection, string $method) use(&$method_to_property_mapping, &$non_public_properties, $path){
+				$class_name = $class_reflection->getName();
+				$this->logger->info("    analyzing " . $this->logger->style("{$class_name}::{$method}", Logger::STYLE_COLOR_LIGHT_MAGENTA));
 				if(
-					$class_reflection === null || // scope is not in a class
 					$node->isPrivate() ||
 					(!$class_reflection->isFinal() && !$node->isFinal())
 				){
@@ -338,14 +338,14 @@ final class PreProcessor{
 				}
 
 				$property = $class_reflection->getProperty($stmt->expr->name->name, $scope);
-				if(!$property->getDeclaringClass()->is($class)){
+				if(!$property->getDeclaringClass()->is($class_name)){
 					// if class has a parent class, the property may not be defined in this class
 					return null;
 				}
 
-				$method_to_property_mapping["{$class}::{$method}"] = [$class, $method, $stmt->expr->name->name];
+				$method_to_property_mapping["{$class_name}::{$method}"] = [$class_name, $method, $stmt->expr->name->name];
 				if(!$property->isPublic()){
-					$non_public_properties["{$class}::{$stmt->expr->name->name}"] = [$path, $class, $stmt->expr->name->name];
+					$non_public_properties["{$class_name}::{$stmt->expr->name->name}"] = [$path, $class_name, $stmt->expr->name->name];
 				}
 				return null;
 			});
