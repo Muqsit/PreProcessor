@@ -112,36 +112,34 @@ final class ParsedFile{
 		method_exists($class, $method) || throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
 		$method = strtolower($method);
 		$this->visitWithScope(static function(Node $node, Scope $scope) use($class, $method, $visitors){
-			if($node instanceof Expr){
-				if($node instanceof MethodCall){
-					if($node->name instanceof Identifier && $node->name->toLowerString() === $method){
-						$type = $scope->getType($node->var);
-						if($type instanceof ObjectType && $type->isInstanceOf($class)->yes()){
-							foreach($visitors as $visitor){
-								$return = $visitor($node, $scope);
-								if($return !== null){
-									return $return;
-								}
-							}
-						}
-					}
-				}elseif($node instanceof StaticCall){
-					$type = match(true){
-						$node->class instanceof Name => new ObjectType($node->class->toString()),
-						$node->class instanceof Expr => $scope->getType($node->class)->getObjectTypeOrClassStringObjectType(),
-						default => null
-					};
-					if(
-						$type instanceof ObjectType &&
-						$type->isInstanceOf($class)->yes() &
-						$node->name instanceof Identifier &&
-						$node->name->toLowerString() === $method
-					){
+			if($node instanceof MethodCall){
+				if($node->name instanceof Identifier && $node->name->toLowerString() === $method){
+					$type = $scope->getType($node->var);
+					if($type instanceof ObjectType && $type->isInstanceOf($class)->yes()){
 						foreach($visitors as $visitor){
 							$return = $visitor($node, $scope);
 							if($return !== null){
 								return $return;
 							}
+						}
+					}
+				}
+			}elseif($node instanceof StaticCall){
+				$type = match(true){
+					$node->class instanceof Name => new ObjectType($node->class->toString()),
+					$node->class instanceof Expr => $scope->getType($node->class)->getObjectTypeOrClassStringObjectType(),
+					default => null
+				};
+				if(
+					$type instanceof ObjectType &&
+					$type->isInstanceOf($class)->yes() &
+					$node->name instanceof Identifier &&
+					$node->name->toLowerString() === $method
+				){
+					foreach($visitors as $visitor){
+						$return = $visitor($node, $scope);
+						if($return !== null){
+							return $return;
 						}
 					}
 				}
