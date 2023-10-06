@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace muqsit\preprocessor;
 
 use PHPUnit\Framework\TestCase;
+use pocketmine\utils\Utils;
 use Symfony\Component\Filesystem\Path;
 use function explode;
 use function file_get_contents;
@@ -36,14 +37,18 @@ final class PreProcessorTest extends TestCase{
 	}
 
 	public function testCommentOutMethodCalls() : void{
-		$processor = $this->buildPreProcessorForSample("logger-debug-method-call.php");
-		$processor->commentOut(\Logger::class, "debug");
+		$processor = $this->buildPreProcessorForSample("comment-out-method-call.php");
+		$processor->commentOut(\Logger::class, "debug"); // non-static method
+		$processor->commentOut(Utils::class, "validateCallableSignature"); // static method
 		$this->assertDiff($processor, [
-			[15, "\t\t/* \$this->getLogger()->debug(\"Plugin enabled timestamp: \" . \\time()) */;"],
-			[18, "\t\t/* \$logger->debug(\"Logging from {\$this->getName()}\") */;"],
-			[23, "\t\t/* \$child->debug(\"Hello world\") */;"],
-			[25, "\t\t/* \$this->l1->debug(\"test phpdoc typed property\") */;"],
-			[26, "\t\t/* \$this->l2->debug(\"test native typed property\") */;"]
+			[24, "\t\t/* \$this->getLogger()->debug(\"Plugin enabled timestamp: \" . time()) */;"],
+			[27, "\t\t/* \$logger->debug(\"Logging from {\$this->getName()}\") */;"],
+			[32, "\t\t/* \$child->debug(\"Hello world\") */;"],
+			[34, "\t\t/* \$this->l1->debug(\"test phpdoc typed property\") */;"],
+			[35, "\t\t/* \$this->l2->debug(\"test native typed property\") */;"],
+			[38, "\t\t\$l->info(\"x\"); /* \$l->debug(\"y\") */; \$l->notice(\"z\");"],
+			[45, "\t\t/* \\pocketmine\\utils\\Utils::validateCallableSignature(static fn(\\pocketmine\\player\\Player \$player): bool => true, \$listener) */;"],
+			[54, "\t\t/* \$utils::validateCallableSignature(static fn(\\pocketmine\\entity\\Entity \$entity): bool => true, \$listener) */;"]
 		]);
 	}
 }
