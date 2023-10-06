@@ -126,11 +126,16 @@ final class ParsedFile{
 						}
 					}
 				}elseif($node instanceof StaticCall){
+					$type = match(true){
+						$node->class instanceof Name => new ObjectType($node->class->toString()),
+						$node->class instanceof Expr => $scope->getType($node->class)->getObjectTypeOrClassStringObjectType(),
+						default => null
+					};
 					if(
-						$node->class instanceof Name &&
+						$type instanceof ObjectType &&
+						$type->isInstanceOf($class)->yes() &
 						$node->name instanceof Identifier &&
-						$node->name->toLowerString() === $method &&
-						$node->class->toString() === $class
+						$node->name->toLowerString() === $method
 					){
 						foreach($visitors as $visitor){
 							$return = $visitor($node, $scope);
