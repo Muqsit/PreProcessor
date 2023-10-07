@@ -112,36 +112,27 @@ final class ParsedFile{
 		method_exists($class, $method) || throw new InvalidArgumentException("Method {$class}::{$method} does not exist");
 		$method = strtolower($method);
 		$this->visitWithScope(static function(Node $node, Scope $scope) use($class, $method, $visitors){
-			if($node instanceof MethodCall){
-				if($node->name instanceof Identifier && $node->name->toLowerString() === $method){
-					$type = $scope->getType($node->var);
-					if($type instanceof ObjectType && $type->isInstanceOf($class)->yes()){
-						foreach($visitors as $visitor){
-							$return = $visitor($node, $scope);
-							if($return !== null){
-								return $return;
-							}
-						}
-					}
-				}
-			}elseif($node instanceof StaticCall){
-				$type = match(true){
+			if(!($node instanceof MethodCall) && !($node instanceof StaticCall)){
+				return null;
+			}
+			if(!($node->name instanceof Identifier) || !($node->name->toLowerString() === $method)){
+				return null;
+			}
+			$type = match(true){
+				$node instanceof MethodCall => $scope->getType($node->var),
+				$node instanceof StaticCall => match(true){
 					$node->class instanceof Name => new ObjectType($node->class->toString()),
 					$node->class instanceof Expr => $scope->getType($node->class)->getObjectTypeOrClassStringObjectType(),
 					default => null
-				};
-				if(
-					$type instanceof ObjectType &&
-					$type->isInstanceOf($class)->yes() &
-					$node->name instanceof Identifier &&
-					$node->name->toLowerString() === $method
-				){
-					foreach($visitors as $visitor){
-						$return = $visitor($node, $scope);
-						if($return !== null){
-							return $return;
-						}
-					}
+				}
+			};
+			if(!($type instanceof ObjectType) || !$type->isInstanceOf($class)->yes()){
+				return null;
+			}
+			foreach($visitors as $visitor){
+				$return = $visitor($node, $scope);
+				if($return !== null){
+					return $return;
 				}
 			}
 			return null;
