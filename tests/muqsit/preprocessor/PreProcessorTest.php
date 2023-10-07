@@ -51,4 +51,17 @@ final class PreProcessorTest extends TestCase{
 			[54, "\t\t/* \$utils::validateCallableSignature(static fn(\\pocketmine\\entity\\Entity \$entity): bool => true, \$listener) */;"]
 		]);
 	}
+
+	public function testReplaceUnqualifiedFunctionCallsWithFullyQualified() : void{
+		$processor = $this->buildPreProcessorForSample("uq-fcalls.php");
+		$processor->replaceUQFunctionNamesToFQ();
+		$this->assertDiff($processor, [
+			[34, "\t\t\t\cos(\$this->y) * \cos(\$this->z) * \$this->radius, ((\sin(\$this->x) * \sin(\$this->y) * \cos(\$this->z)) - (\cos(\$this->x) * \sin(\$this->z))) * \$this->radius, ((\cos(\$this->x) * \sin(\$this->y) * \cos(\$this->z)) + (\sin(\$this->x) * \sin(\$this->z))) * \$this->radius,"],
+			[35, "\t\t\t\cos(\$this->y) * \sin(\$this->z) * \$this->radius, ((\sin(\$this->x) * \sin(\$this->y) * \sin(\$this->z)) + (\cos(\$this->x) * \cos(\$this->z))) * \$this->radius, ((\cos(\$this->x) * \sin(\$this->y) * \sin(\$this->z)) - (\sin(\$this->x) * \cos(\$this->z))) * \$this->radius,"],
+			[36, "\t\t\t-\sin(\$this->y) * \$this->radius, \sin(\$this->x) * \cos(\$this->y) * \$this->radius, \cos(\$this->x) * \cos(\$this->y) * \$this->radius"],
+			[48, "\t\t\\assert(!empty(\$mat));"],
+			[50, "\t\t\t\$x = \cos(\$d * \$i);"],
+			[51, "\t\t\t\$z = \sin(\$d * \$i);"]
+		]);
+	}
 }
