@@ -5,7 +5,7 @@
     "license": "LGPL-3.0-only",
     "require": {
         "php": "^8.1",
-        "phpstan/phpstan": "1.10.*",
+        "phpstan/phpstan": "1.10.39",
         "nikic/php-parser": "4.17.*",
         "symfony/filesystem": "~6.3.0",
         "php-parallel-lint/php-console-color": "^1.0"
