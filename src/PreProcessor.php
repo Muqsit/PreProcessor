@@ -24,8 +24,6 @@ use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Property;
 use PhpParser\Node\Stmt\Return_;
-use PhpParser\NodeTraverser;
-use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\Parser\Php7;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
@@ -36,7 +34,6 @@ use PHPStan\Reflection\ClassReflection;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
-use ReflectionClass;
 use RuntimeException;
 use SplFileInfo;
 use Symfony\Component\Filesystem\Path;
@@ -189,41 +186,6 @@ final class PreProcessor{
 				}
 				return null;
 			});
-		}
-		return $this;
-	}
-
-	/**
-	 * @param class-string $class
-	 * @param string $method
-	 * @return self
-	 */
-	public function inlineMethodCall(string $class, string $method) : self{
-		foreach($this->parsed_files as $file){
-			$method_node = $file->getMethodNode($class, $method);
-			$stmts = $method_node->getStmts();
-			if(count($stmts) === 1){
-				$params = [];
-				foreach($method_node->params as $param){
-					$params[] = $param->var->name;
-				}
-				$traverse_stmts = [];
-				foreach($stmts as $stmt){
-					$traverse_stmts[] = $stmt->expr;
-				}
-				$file->visitMethodCalls($class, $method, function(MethodCall|StaticCall $node, Scope $scope) use($traverse_stmts, $params){
-					$mapping = [];
-					foreach($node->args as $index => $arg){
-						$mapping[$params[$index]] = $arg->value;
-					}
-
-					$traverser = new NodeTraverser();
-					$traverser->addVisitor(new ClosureNodeVisitor(function(Node $node) use($mapping) {
-						return $node instanceof Variable ? clone $mapping[$node->name] : clone $node;
-					}));
-					return $traverser->traverse($traverse_stmts)[0];
-				});
-			}
 		}
 		return $this;
 	}
