@@ -7,7 +7,6 @@ namespace muqsit\preprocessor;
 use InvalidArgumentException;
 use PHP_Parallel_Lint\PhpConsoleColor\ConsoleColor;
 use PHP_Parallel_Lint\PhpConsoleColor\InvalidStyleException;
-use function addslashes;
 use function in_array;
 use function str_replace;
 use const PHP_EOL;

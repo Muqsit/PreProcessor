@@ -25,8 +25,8 @@ use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Property;
 use PhpParser\Node\Stmt\Return_;
 use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitor\CloningVisitor;
 use PhpParser\Parser\Php7;
-use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeFactory;
@@ -36,6 +36,7 @@ use PHPStan\Reflection\ClassReflection;
 use PHPStan\Type\ErrorType;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use ReflectionClass;
 use RuntimeException;
 use SplFileInfo;
 use Symfony\Component\Filesystem\Path;
@@ -90,6 +91,7 @@ final class PreProcessor{
 		$parser = new Php7($lexer);
 		$scope_factory = $container->getByType(ScopeFactory::class);
 		$scope_resolver = $container->getByType(NodeScopeResolver::class);
+		$logger = new Logger();
 		$parsed_files = [];
 		foreach($files as $file){
 			$path = $file->getRealPath();
@@ -97,7 +99,7 @@ final class PreProcessor{
 			$tokens_original = $lexer->getTokens();
 			$parsed_files[$path] = new ParsedFile($scope_factory, $scope_resolver, $file, $nodes_original, $tokens_original);
 		}
-		return new self($parsed_files);
+		return new self($container, $lexer, $parser, $scope_factory, $scope_resolver, $logger, $parsed_files);
 	}
 
 	private static function createContainer() : Container{
@@ -116,12 +118,22 @@ final class PreProcessor{
 	}
 
 	/**
-	 * @param array<string, ParsedFile> $parsed_files
+	 * @param Container $container
+	 * @param Lexer $lexer
+	 * @param Php7 $parser
+	 * @param ScopeFactory $scope_factory
+	 * @param NodeScopeResolver $scope_resolver
 	 * @param Logger $logger
+	 * @param array<string, ParsedFile> $parsed_files
 	 */
 	public function __construct(
-		readonly public array $parsed_files,
-		readonly public Logger $logger = new Logger()
+		readonly public Container $container,
+		readonly public Lexer $lexer,
+		readonly public Php7 $parser,
+		readonly public ScopeFactory $scope_factory,
+		readonly public NodeScopeResolver $scope_resolver,
+		readonly public Logger $logger,
+		readonly public array $parsed_files
 	){}
 
 	private function printLinePos(Node $node, Scope $scope) : string{
@@ -134,7 +146,7 @@ final class PreProcessor{
 	 * @return self
 	 */
 	public function commentOut(string $class, string $method) : self{
-		$printer = new Standard();
+		$printer = new Printer();
 		$done = 0;
 		$total = count($this->parsed_files);
 		foreach($this->parsed_files as $path => $file){
@@ -155,7 +167,7 @@ final class PreProcessor{
 	}
 
 	public function replaceUQFunctionNamesToFQ() : self{
-		$printer = new Standard();
+		$printer = new Printer();
 		$done = 0;
 		$total = count($this->parsed_files);
 		foreach($this->parsed_files as $path => $file){
@@ -224,7 +236,7 @@ final class PreProcessor{
 	 * @return self
 	 */
 	public function replaceIssetWithArrayKeyExists() : self{
-		$printer = new Standard();
+		$printer = new Printer();
 		foreach($this->parsed_files as $path => $file){
 			$file->visitWithScope(function(Node $node, Scope $scope) use($path, $printer) {
 				if(
@@ -351,7 +363,7 @@ final class PreProcessor{
 			});
 		}
 
-		$printer = new Standard();
+		$printer = new Printer();
 		$done = 0;
 		$total = count($non_public_properties);
 		foreach($non_public_properties as [$path, $class, $property]){
@@ -430,7 +442,7 @@ final class PreProcessor{
 		is_dir($output_folder) || throw new InvalidArgumentException("Directory {$output_folder} does not exist.");
 		$cwd = getcwd();
 		$base_path = Path::makeAbsolute($output_folder, $cwd);
-		$printer = new Standard();
+		$printer = new Printer();
 		foreach($this->parsed_files as $path => $file){
 			yield Path::join($base_path, Path::makeRelative($path, $cwd)) => $file->export($printer);
 		}

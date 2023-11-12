@@ -21,9 +21,11 @@ use PHPStan\Analyser\NodeScopeResolver;
 use PHPStan\Analyser\Scope;
 use PHPStan\Analyser\ScopeContext;
 use PHPStan\Analyser\ScopeFactory;
+use PHPStan\Node\Expr\AlwaysRememberedExpr;
 use PHPStan\Reflection\ClassReflection;
 use PHPStan\Type\ObjectType;
 use SplFileInfo;
+use function array_map;
 use function assert;
 use function method_exists;
 use function spl_object_id;
@@ -44,8 +46,8 @@ final class ParsedFile{
 	 * @param Node[] $tokens_original
 	 */
 	public function __construct(
-		readonly private ScopeFactory $scope_factory,
-		readonly private NodeScopeResolver $scope_resolver,
+		readonly public ScopeFactory $scope_factory,
+		readonly public NodeScopeResolver $scope_resolver,
 		readonly public SplFileInfo $file,
 		readonly private array $nodes_original,
 		readonly private array $tokens_original
@@ -179,6 +181,13 @@ final class ParsedFile{
 	}
 
 	public function export(PrettyPrinterAbstract $printer) : string{
-		return $printer->printFormatPreserving($this->nodes_modified, $this->nodes_original, $this->tokens_original);
+		$nodes_modified = $this->nodes_modified;
+		$nodes_modified = array_map(function(Node $node) : Node{
+			if($node instanceof AlwaysRememberedExpr){
+				return $node->getExpr();
+			}
+			return $node;
+		}, $nodes_modified);
+		return $printer->printFormatPreserving($nodes_modified, $this->nodes_original, $this->tokens_original);
 	}
 }
