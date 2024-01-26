@@ -7,7 +7,7 @@
         "php": "^8.1",
         "phpstan/phpstan": "1.10.*",
         "nikic/php-parser": "5.0.*",
-        "symfony/filesystem": "~6.4.*",
+        "symfony/filesystem": "~6.4.0",
         "php-parallel-lint/php-console-color": "^1.0"
     },
     "autoload": {
